@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.domain.Account;
+import dev.mosiur.payledger.payments.account.domain.AccountType;
 import dev.mosiur.payledger.payments.account.domain.Currency;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,25 +61,50 @@ class AccountRepositoryIT {
 
     @Test
     void databaseRejectsANegativeUserBalance() {
-        assertThatThrownBy(() -> insertAccount("USER", -1))
+        assertThatThrownBy(() -> jdbc.sql("""
+                INSERT INTO accounts (id, owner_id, currency, type, status, balance_minor, created_at)
+                VALUES (?, 'ayesha', 'BDT', 'USER', 'ACTIVE', -1, now())
+                """).param(UUID.randomUUID()).update())
                 .isInstanceOf(DataIntegrityViolationException.class)
                 .hasMessageContaining("ck_accounts_user_balance_non_negative");
     }
 
     @Test
-    void databaseAllowsANegativeSystemBalance() {
-        insertAccount("SYSTEM", -50_000);
-
-        assertThat(jdbc.sql("SELECT count(*) FROM accounts WHERE type = 'SYSTEM'").query(Long.class).single())
-                .isEqualTo(1);
+    void createsOneSystemAccountPerCurrency() {
+        for (Currency currency : Currency.values()) {
+            assertThat(repository.findIdByTypeAndCurrency(AccountType.SYSTEM, currency)).isPresent();
+        }
     }
 
-    private void insertAccount(String type, long balanceMinor) {
-        jdbc.sql("""
-                INSERT INTO accounts (id, owner_id, currency, type, status, balance_minor, created_at)
-                VALUES (?, 'system', 'BDT', ?, 'ACTIVE', ?, now())
-                """)
-                .params(UUID.randomUUID(), type, balanceMinor)
+    @Test
+    void systemAccountMayGoNegativeButCannotBeDuplicated() {
+        int updated = jdbc.sql("UPDATE accounts SET balance_minor = -50000 WHERE type = 'SYSTEM' AND currency = 'BDT'")
                 .update();
+        assertThat(updated).isEqualTo(1);
+
+        assertThatThrownBy(() -> jdbc.sql("""
+                INSERT INTO accounts (id, owner_id, currency, type, status, balance_minor, created_at)
+                VALUES (?, 'system', 'BDT', 'SYSTEM', 'ACTIVE', 0, now())
+                """).param(UUID.randomUUID()).update())
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("ux_accounts_one_system_per_currency");
+    }
+
+    @Test
+    void readsAUserAccountsCurrencyWithoutLoadingTheEntity() {
+        Account account = repository.save(Account.openUserAccount("ayesha", Currency.EUR, T0));
+
+        assertThat(repository.findCurrency(account.getId(), AccountType.USER)).contains(Currency.EUR);
+        assertThat(repository.findCurrency(account.getId(), AccountType.SYSTEM)).isEmpty();
+    }
+
+    @Test
+    void locksAccountsInIdOrderWhateverTheRequestOrder() {
+        Account first = repository.save(Account.openUserAccount("ayesha", Currency.BDT, T0));
+        Account second = repository.save(Account.openUserAccount("rahim", Currency.BDT, T0));
+
+        assertThat(repository.lockAllInIdOrder(List.of(second.getId(), first.getId())))
+                .extracting(Account::getId)
+                .containsExactly(first.getId(), second.getId());
     }
 }

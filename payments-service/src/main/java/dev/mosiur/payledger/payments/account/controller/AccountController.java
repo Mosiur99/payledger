@@ -3,6 +3,7 @@ package dev.mosiur.payledger.payments.account.controller;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
 import dev.mosiur.payledger.payments.account.model.OpenAccountRequest;
 import dev.mosiur.payledger.payments.account.service.AccountService;
+import dev.mosiur.payledger.payments.common.web.CallerHeader;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
@@ -22,9 +23,6 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/accounts")
 public class AccountController {
 
-    // Temporary caller identity until JWT authentication replaces it.
-    static final String OWNER_HEADER = "X-Owner-Id";
-
     private final AccountService accountService;
 
     public AccountController(AccountService accountService) {
@@ -33,20 +31,20 @@ public class AccountController {
 
     @PostMapping
     public ResponseEntity<AccountResponse> open(
-            @RequestHeader(OWNER_HEADER) @NotBlank @Size(max = 64) String ownerId,
+            @RequestHeader(CallerHeader.NAME) @NotBlank @Size(max = 64) String ownerId,
             @Valid @RequestBody OpenAccountRequest request) {
         AccountResponse account = accountService.open(ownerId, request);
         return ResponseEntity.created(URI.create("/api/v1/accounts/" + account.id())).body(account);
     }
 
     @GetMapping
-    public List<AccountResponse> list(@RequestHeader(OWNER_HEADER) @NotBlank @Size(max = 64) String ownerId) {
+    public List<AccountResponse> list(@RequestHeader(CallerHeader.NAME) @NotBlank @Size(max = 64) String ownerId) {
         return accountService.listForOwner(ownerId);
     }
 
     @GetMapping("/{accountId}")
     public AccountResponse get(
-            @RequestHeader(OWNER_HEADER) @NotBlank @Size(max = 64) String ownerId,
+            @RequestHeader(CallerHeader.NAME) @NotBlank @Size(max = 64) String ownerId,
             @PathVariable UUID accountId) {
         return accountService.getForOwner(ownerId, accountId);
     }

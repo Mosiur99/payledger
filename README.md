@@ -32,6 +32,8 @@ Until authentication is added, the caller is identified by the `X-Owner-Id` head
 | `POST` | `/api/v1/accounts` | Open an account in `BDT`, `EUR` or `USD` |
 | `GET` | `/api/v1/accounts` | List the caller's accounts, oldest first |
 | `GET` | `/api/v1/accounts/{id}` | Read one of the caller's accounts |
+| `GET` | `/api/v1/accounts/{id}/statement?limit=50&before={entryId}` | Ledger entries, newest first, with a cursor for older pages |
+| `POST` | `/api/v1/deposits` | Fund an account from the system account of its currency |
 
 ```sh
 curl -X POST localhost:8080/api/v1/accounts \
@@ -40,6 +42,10 @@ curl -X POST localhost:8080/api/v1/accounts \
 ```
 
 Amounts are whole numbers in the currency's smallest unit (paisa, cents), so `balanceMinor: 50000` means 500.00.
+
+## How money is recorded
+
+Every movement is a transaction with exactly two ledger entries: a debit on one account and a credit on another, for the same amount. Entries are append-only. Deposits debit a system account (one per currency, allowed to go negative) and credit the user, so the sum of all balances in each currency is always zero. Accounts are locked in id order before any balance changes, which prevents lost updates and deadlocks.
 
 ## Test
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
+import dev.mosiur.payledger.payments.common.web.CallerHeader;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,7 +42,7 @@ class AccountApiIT {
 
         assertThat(opened).isNotNull();
         client.get().uri(ACCOUNTS + "/" + opened.id())
-                .header(AccountController.OWNER_HEADER, owner)
+                .header(CallerHeader.NAME, owner)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -59,7 +60,7 @@ class AccountApiIT {
         open(rahim, "{\"currency\":\"USD\"}").expectStatus().isCreated();
 
         client.get().uri(ACCOUNTS)
-                .header(AccountController.OWNER_HEADER, ayesha)
+                .header(CallerHeader.NAME, ayesha)
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -76,7 +77,7 @@ class AccountApiIT {
 
         assertThat(ayeshas).isNotNull();
         client.get().uri(ACCOUNTS + "/" + ayeshas.id())
-                .header(AccountController.OWNER_HEADER, uniqueOwner())
+                .header(CallerHeader.NAME, uniqueOwner())
                 .exchange()
                 .expectStatus().isNotFound();
     }
@@ -96,14 +97,14 @@ class AccountApiIT {
                 .expectStatus().isBadRequest();
 
         client.get().uri(ACCOUNTS)
-                .header(AccountController.OWNER_HEADER, " ")
+                .header(CallerHeader.NAME, " ")
                 .exchange()
                 .expectStatus().isBadRequest();
     }
 
     private RestTestClient.ResponseSpec open(String owner, String json) {
         return client.post().uri(ACCOUNTS)
-                .header(AccountController.OWNER_HEADER, owner)
+                .header(CallerHeader.NAME, owner)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(json)
                 .exchange();

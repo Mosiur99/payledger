@@ -57,6 +57,25 @@ public class Account {
         return new Account(ownerId, currency, AccountType.USER, createdAt);
     }
 
+    public void debit(long amountMinor) {
+        balanceMinor = Math.subtractExact(balanceMinor, requirePositive(amountMinor));
+    }
+
+    public void credit(long amountMinor) {
+        balanceMinor = Math.addExact(balanceMinor, requirePositive(amountMinor));
+    }
+
+    public boolean isActive() {
+        return status == AccountStatus.ACTIVE;
+    }
+
+    private static long requirePositive(long amountMinor) {
+        if (amountMinor <= 0) {
+            throw new IllegalArgumentException("Amount must be positive: " + amountMinor);
+        }
+        return amountMinor;
+    }
+
     public UUID getId() {
         return id;
     }
