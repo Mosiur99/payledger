@@ -1,0 +1,234 @@
+{
+  "info": {
+    "name": "PayLedger",
+    "description": "Run the requests in order against a local payments-service. Each money-moving request gets a fresh Idempotency-Key.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Open Ayesha's BDT account",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Owner-Id",
+            "value": "{{owner}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/accounts",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"currency\": \"BDT\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('accountId', pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Open Rahim's BDT account",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Owner-Id",
+            "value": "{{receiver}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/accounts",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"currency\": \"BDT\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('receiverAccountId', pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Deposit 1,000.00 into Ayesha's account",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Owner-Id",
+            "value": "admin"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/deposits",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"accountId\": \"{{accountId}}\",\n  \"amountMinor\": 100000,\n  \"reference\": \"Top-up\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Transfer 500.00 to Rahim",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Owner-Id",
+            "value": "{{owner}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/transfers",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fromAccountId\": \"{{accountId}}\",\n  \"toAccountId\": \"{{receiverAccountId}}\",\n  \"amountMinor\": 50000,\n  \"reference\": \"Rent\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Transfer too much (422 insufficient funds)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-Owner-Id",
+            "value": "{{owner}}"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "{{$guid}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/transfers",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fromAccountId\": \"{{accountId}}\",\n  \"toAccountId\": \"{{receiverAccountId}}\",\n  \"amountMinor\": 99999999,\n  \"reference\": \"Too much\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('422 Problem Details', () => {",
+              "  pm.response.to.have.status(422);",
+              "  pm.expect(pm.response.json().type).to.eql('/problems/insufficient-funds');",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. List Ayesha's accounts",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Owner-Id",
+            "value": "{{owner}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/accounts"
+      }
+    },
+    {
+      "name": "7. Ayesha's statement",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Owner-Id",
+            "value": "{{owner}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/statement?limit=50"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "owner",
+      "value": "ayesha"
+    },
+    {
+      "key": "receiver",
+      "value": "rahim"
+    },
+    {
+      "key": "accountId",
+      "value": ""
+    },
+    {
+      "key": "receiverAccountId",
+      "value": ""
+    }
+  ]
+}

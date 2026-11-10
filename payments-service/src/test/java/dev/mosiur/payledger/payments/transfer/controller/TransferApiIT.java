@@ -64,7 +64,13 @@ class TransferApiIT {
         UUID to = openAccount(rahim, "BDT");
         deposit(from, 10_000);
 
-        transfer(ayesha, from, to, 10_001).expectStatus().isEqualTo(422);
+        transfer(ayesha, from, to, 10_001)
+                .expectStatus().isEqualTo(422)
+                .expectHeader().contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                .expectBody()
+                .jsonPath("$.type").isEqualTo("/problems/insufficient-funds")
+                .jsonPath("$.availableMinor").isEqualTo(10_000)
+                .jsonPath("$.requestedMinor").isEqualTo(10_001);
 
         statement(ayesha, from).jsonPath("$.balanceMinor").isEqualTo(10_000);
         statement(rahim, to)

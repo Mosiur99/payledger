@@ -60,7 +60,40 @@ Every movement is a transaction with exactly two ledger entries: a debit on one 
 | Same key, different request | `422` |
 | Server error (`5xx`) | The key is released so the client can retry |
 
-Transfer errors: `404` for an unknown account or one the caller does not own, `409` for a frozen account, `422` for insufficient funds, mixed currencies or a transfer to the same account.
+## Errors
+
+Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details response (`application/problem+json`) with a stable `type`:
+
+```json
+{
+  "type": "/problems/insufficient-funds",
+  "title": "Insufficient funds",
+  "status": 422,
+  "detail": "Account 0199a… has 12000 available; 50000 requested.",
+  "instance": "/api/v1/transfers",
+  "accountId": "0199a…",
+  "availableMinor": 12000,
+  "requestedMinor": 50000
+}
+```
+
+| Type | Status | When |
+| --- | --- | --- |
+| `/problems/validation` | 400 | Invalid or missing fields, headers or parameters; listed under `errors` |
+| `/problems/idempotency-key-required` | 400 | Missing `Idempotency-Key` |
+| `/problems/account-not-found` | 404 | Unknown account, or one the caller does not own |
+| `/problems/account-frozen` | 409 | A frozen account |
+| `/problems/idempotency-in-progress` | 409 | The first request with this key is still running |
+| `/problems/insufficient-funds` | 422 | Not enough money |
+| `/problems/currency-mismatch` | 422 | Accounts in different currencies |
+| `/problems/same-account-transfer` | 422 | Source and destination are the same |
+| `/problems/idempotency-key-reused` | 422 | The key was used for a different request |
+| `/problems/internal` | 500 | Unexpected failure; no internal details are exposed |
+
+## API docs and demo
+
+- Swagger UI: http://localhost:8080/swagger-ui.html (OpenAPI JSON at `/v3/api-docs`)
+- Postman: import `docs/postman/PayLedger.postman_collection.json` and run it top to bottom. It opens two accounts, deposits, transfers, shows an insufficient-funds error and reads the statement.
 
 ## Test
 

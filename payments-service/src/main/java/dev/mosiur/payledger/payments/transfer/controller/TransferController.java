@@ -1,6 +1,7 @@
 package dev.mosiur.payledger.payments.transfer.controller;
 
 import dev.mosiur.payledger.payments.common.web.CallerHeader;
+import dev.mosiur.payledger.payments.common.web.Idempotent;
 import dev.mosiur.payledger.payments.transfer.model.TransferRequest;
 import dev.mosiur.payledger.payments.transfer.model.TransferResponse;
 import dev.mosiur.payledger.payments.transfer.service.TransferService;
@@ -26,6 +27,7 @@ public class TransferController {
     }
 
     @PostMapping
+    @Idempotent
     @ResponseStatus(HttpStatus.CREATED)
     public TransferResponse transfer(
             @RequestHeader(CallerHeader.NAME) @NotBlank @Size(max = 64) String ownerId,

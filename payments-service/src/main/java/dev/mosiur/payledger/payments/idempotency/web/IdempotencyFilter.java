@@ -1,5 +1,6 @@
 package dev.mosiur.payledger.payments.idempotency.web;
 
+import dev.mosiur.payledger.payments.common.error.ProblemType;
 import dev.mosiur.payledger.payments.common.web.CallerHeader;
 import dev.mosiur.payledger.payments.idempotency.domain.IdempotencyDecision;
 import dev.mosiur.payledger.payments.idempotency.domain.StoredResponse;
@@ -17,7 +18,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -60,7 +60,7 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
         String key = request.getHeader(KEY_HEADER);
         if (!isValid(key)) {
-            writeProblem(request, response, HttpStatus.BAD_REQUEST, "Idempotency key required",
+            writeProblem(request, response, ProblemType.IDEMPOTENCY_KEY_REQUIRED,
                     "Send a unique " + KEY_HEADER + " header of 1 to " + MAX_LENGTH + " characters.");
             return;
         }
@@ -71,10 +71,10 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         switch (idempotencyService.begin(owner, key, requestHash)) {
             case IdempotencyDecision.Proceed() -> execute(cachedRequest, response, chain, owner, key);
             case IdempotencyDecision.Replay(StoredResponse stored) -> replay(response, stored);
-            case IdempotencyDecision.InProgress() -> writeProblem(request, response, HttpStatus.CONFLICT,
-                    "Request in progress", "A request with this idempotency key is still being processed.");
-            case IdempotencyDecision.KeyReused() -> writeProblem(request, response, HttpStatus.UNPROCESSABLE_CONTENT,
-                    "Idempotency key reused", "This idempotency key was already used for a different request.");
+            case IdempotencyDecision.InProgress() -> writeProblem(request, response,
+                    ProblemType.IDEMPOTENCY_IN_PROGRESS, "A request with this idempotency key is still being processed.");
+            case IdempotencyDecision.KeyReused() -> writeProblem(request, response,
+                    ProblemType.IDEMPOTENCY_KEY_REUSED, "This idempotency key was already used for a different request.");
         }
     }
 
@@ -110,14 +110,16 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         }
     }
 
-    private void writeProblem(HttpServletRequest request, HttpServletResponse response, HttpStatus status,
-            String title, String detail) throws IOException {
+    /** Written by hand because filters run outside Spring MVC's exception handling. */
+    private void writeProblem(HttpServletRequest request, HttpServletResponse response, ProblemType type,
+            String detail) throws IOException {
         Map<String, Object> problem = new LinkedHashMap<>();
-        problem.put("title", title);
-        problem.put("status", status.value());
+        problem.put("type", type.type().toString());
+        problem.put("title", type.title());
+        problem.put("status", type.status().value());
         problem.put("detail", detail);
         problem.put("instance", request.getRequestURI());
-        response.setStatus(status.value());
+        response.setStatus(type.status().value());
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         response.getOutputStream().write(jsonMapper.writeValueAsBytes(problem));
     }

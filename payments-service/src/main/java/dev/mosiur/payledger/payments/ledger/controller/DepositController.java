@@ -1,6 +1,7 @@
 package dev.mosiur.payledger.payments.ledger.controller;
 
 import dev.mosiur.payledger.payments.common.web.CallerHeader;
+import dev.mosiur.payledger.payments.common.web.Idempotent;
 import dev.mosiur.payledger.payments.ledger.model.DepositRequest;
 import dev.mosiur.payledger.payments.ledger.model.TransactionResponse;
 import dev.mosiur.payledger.payments.ledger.service.DepositService;
@@ -26,6 +27,7 @@ public class DepositController {
     }
 
     @PostMapping
+    @Idempotent
     @ResponseStatus(HttpStatus.CREATED)
     public TransactionResponse deposit(
             @RequestHeader(CallerHeader.NAME) @NotBlank @Size(max = 64) String caller,
