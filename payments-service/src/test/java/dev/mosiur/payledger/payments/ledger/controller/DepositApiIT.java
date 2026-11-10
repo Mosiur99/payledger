@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
 import dev.mosiur.payledger.payments.common.web.CallerHeader;
+import dev.mosiur.payledger.payments.idempotency.web.IdempotencyFilter;
 import dev.mosiur.payledger.payments.ledger.model.StatementResponse;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -126,6 +127,7 @@ class DepositApiIT {
         String referenceJson = reference == null ? "null" : "\"" + reference + "\"";
         return client.post().uri("/api/v1/deposits")
                 .header(CallerHeader.NAME, "admin")
+                .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"accountId\":\"" + accountId + "\",\"amountMinor\":" + amount
                         + ",\"reference\":" + referenceJson + "}")

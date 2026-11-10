@@ -48,6 +48,18 @@ Amounts are whole numbers in the currency's smallest unit (paisa, cents), so `ba
 
 Every movement is a transaction with exactly two ledger entries: a debit on one account and a credit on another, for the same amount. Entries are append-only. Deposits debit a system account (one per currency, allowed to go negative) and credit the user, so the sum of all balances in each currency is always zero. Accounts are locked in id order before any balance changes, which prevents lost updates and deadlocks. A user account can never go below zero: the domain refuses the debit and a database constraint backs it up.
 
+## Safe retries
+
+`POST /api/v1/transfers` and `POST /api/v1/deposits` require an `Idempotency-Key` header (1 to 64 characters, unique per request, for example a UUID). Keys are scoped to the caller.
+
+| Situation | Response |
+| --- | --- |
+| New key | The request runs and its response is stored |
+| Same key, same request, already finished | The stored response, with `Idempotent-Replayed: true` |
+| Same key, still running | `409` |
+| Same key, different request | `422` |
+| Server error (`5xx`) | The key is released so the client can retry |
+
 Transfer errors: `404` for an unknown account or one the caller does not own, `409` for a frozen account, `422` for insufficient funds, mixed currencies or a transfer to the same account.
 
 ## Test

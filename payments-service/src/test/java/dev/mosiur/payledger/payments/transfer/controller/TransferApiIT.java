@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
 import dev.mosiur.payledger.payments.common.web.CallerHeader;
+import dev.mosiur.payledger.payments.idempotency.web.IdempotencyFilter;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -107,6 +108,7 @@ class TransferApiIT {
         transfer(ayesha, from, to, 0).expectStatus().isBadRequest();
         client.post().uri("/api/v1/transfers")
                 .header(CallerHeader.NAME, ayesha)
+                .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"fromAccountId\":\"" + from + "\",\"amountMinor\":100}")
                 .exchange()
@@ -129,6 +131,7 @@ class TransferApiIT {
     private void deposit(UUID accountId, long amount) {
         client.post().uri("/api/v1/deposits")
                 .header(CallerHeader.NAME, "admin")
+                .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"accountId\":\"" + accountId + "\",\"amountMinor\":" + amount + "}")
                 .exchange()
@@ -138,6 +141,7 @@ class TransferApiIT {
     private RestTestClient.ResponseSpec transfer(String caller, UUID from, UUID to, long amount) {
         return client.post().uri("/api/v1/transfers")
                 .header(CallerHeader.NAME, caller)
+                .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"fromAccountId\":\"" + from + "\",\"toAccountId\":\"" + to
                         + "\",\"amountMinor\":" + amount + ",\"reference\":\"Rent\"}")
