@@ -23,6 +23,24 @@ docker compose -f deploy/compose/docker-compose.yml up -d
 
 Check health at http://localhost:8080/actuator/health and http://localhost:8081/actuator/health.
 
+## API
+
+Until authentication is added, the caller is identified by the `X-Owner-Id` header.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/v1/accounts` | Open an account in `BDT`, `EUR` or `USD` |
+| `GET` | `/api/v1/accounts` | List the caller's accounts, oldest first |
+| `GET` | `/api/v1/accounts/{id}` | Read one of the caller's accounts |
+
+```sh
+curl -X POST localhost:8080/api/v1/accounts \
+  -H 'X-Owner-Id: ayesha' -H 'Content-Type: application/json' \
+  -d '{"currency":"BDT"}'
+```
+
+Amounts are whole numbers in the currency's smallest unit (paisa, cents), so `balanceMinor: 50000` means 500.00.
+
 ## Test
 
 ```sh
