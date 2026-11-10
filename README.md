@@ -34,6 +34,7 @@ Until authentication is added, the caller is identified by the `X-Owner-Id` head
 | `GET` | `/api/v1/accounts/{id}` | Read one of the caller's accounts |
 | `GET` | `/api/v1/accounts/{id}/statement?limit=50&before={entryId}` | Ledger entries, newest first, with a cursor for older pages |
 | `POST` | `/api/v1/deposits` | Fund an account from the system account of its currency |
+| `POST` | `/api/v1/transfers` | Move money from one of the caller's accounts to another account in the same currency |
 
 ```sh
 curl -X POST localhost:8080/api/v1/accounts \
@@ -45,7 +46,9 @@ Amounts are whole numbers in the currency's smallest unit (paisa, cents), so `ba
 
 ## How money is recorded
 
-Every movement is a transaction with exactly two ledger entries: a debit on one account and a credit on another, for the same amount. Entries are append-only. Deposits debit a system account (one per currency, allowed to go negative) and credit the user, so the sum of all balances in each currency is always zero. Accounts are locked in id order before any balance changes, which prevents lost updates and deadlocks.
+Every movement is a transaction with exactly two ledger entries: a debit on one account and a credit on another, for the same amount. Entries are append-only. Deposits debit a system account (one per currency, allowed to go negative) and credit the user, so the sum of all balances in each currency is always zero. Accounts are locked in id order before any balance changes, which prevents lost updates and deadlocks. A user account can never go below zero: the domain refuses the debit and a database constraint backs it up.
+
+Transfer errors: `404` for an unknown account or one the caller does not own, `409` for a frozen account, `422` for insufficient funds, mixed currencies or a transfer to the same account.
 
 ## Test
 

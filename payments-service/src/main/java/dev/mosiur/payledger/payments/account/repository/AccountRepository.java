@@ -6,8 +6,11 @@ import dev.mosiur.payledger.payments.account.domain.Currency;
 import jakarta.persistence.LockModeType;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -31,4 +34,10 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Account a where a.id in :ids order by a.id")
     List<Account> lockAllInIdOrder(Collection<UUID> ids);
+
+    /** Locks the accounts that exist among {@code ids}; missing ids are absent from the map. */
+    default Map<UUID, Account> lockByIds(UUID... ids) {
+        return lockAllInIdOrder(List.of(ids)).stream()
+                .collect(Collectors.toMap(Account::getId, Function.identity()));
+    }
 }

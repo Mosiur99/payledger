@@ -9,7 +9,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import dev.mosiur.payledger.payments.account.domain.Account;
+import dev.mosiur.payledger.payments.account.domain.AccountType;
 import dev.mosiur.payledger.payments.account.domain.Currency;
+import dev.mosiur.payledger.payments.account.domain.InsufficientFundsException;
 import dev.mosiur.payledger.payments.ledger.domain.EntryDirection;
 import dev.mosiur.payledger.payments.ledger.domain.LedgerEntry;
 import dev.mosiur.payledger.payments.ledger.domain.LedgerTransaction;
@@ -53,7 +55,7 @@ class LedgerPostingServiceImplTest {
     @Test
     void writesOneDebitAndOneCreditOfTheSameAmount() {
         when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> call.getArgument(0));
-        Account system = account(Currency.BDT);
+        Account system = systemAccount(Currency.BDT);
         Account ayesha = account(Currency.BDT);
 
         LedgerTransaction transaction = service.post(posting(system, ayesha, 50_000));
@@ -76,7 +78,7 @@ class LedgerPostingServiceImplTest {
     @Test
     void movesBothBalances() {
         when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> call.getArgument(0));
-        Account system = account(Currency.BDT);
+        Account system = systemAccount(Currency.BDT);
         Account ayesha = account(Currency.BDT);
 
         service.post(posting(system, ayesha, 50_000));
@@ -97,6 +99,17 @@ class LedgerPostingServiceImplTest {
     }
 
     @Test
+    void refusesToOverdrawAUserAccount() {
+        Account ayesha = account(Currency.BDT);
+        Account rahim = account(Currency.BDT);
+
+        assertThatThrownBy(() -> service.post(posting(ayesha, rahim, 1)))
+                .isInstanceOf(InsufficientFundsException.class);
+        assertThat(rahim.getBalanceMinor()).isZero();
+        verifyNoInteractions(transactionRepository, entryRepository);
+    }
+
+    @Test
     void refusesToPostToTheSameAccount() {
         Account ayesha = account(Currency.BDT);
 
@@ -107,6 +120,12 @@ class LedgerPostingServiceImplTest {
 
     private static Posting posting(Account debit, Account credit, long amount) {
         return new Posting(TransactionType.DEPOSIT, debit, credit, amount, "top-up", "admin");
+    }
+
+    private static Account systemAccount(Currency currency) {
+        Account account = account(currency);
+        ReflectionTestUtils.setField(account, "type", AccountType.SYSTEM);
+        return account;
     }
 
     private static Account account(Currency currency) {

@@ -7,6 +7,7 @@ import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class AccountTest {
 
@@ -18,6 +19,16 @@ class AccountTest {
         account.debit(20_000);
 
         assertThat(account.getBalanceMinor()).isEqualTo(30_000);
+    }
+
+    @Test
+    void systemAccountMayGoNegative() {
+        Account system = Account.openUserAccount("system", Currency.BDT, Instant.EPOCH);
+        ReflectionTestUtils.setField(system, "type", AccountType.SYSTEM);
+
+        system.debit(50_000);
+
+        assertThat(system.getBalanceMinor()).isEqualTo(-50_000);
     }
 
     @ParameterizedTest
@@ -32,6 +43,22 @@ class AccountTest {
         account.credit(Long.MAX_VALUE);
 
         assertThatThrownBy(() -> account.credit(1)).isInstanceOf(ArithmeticException.class);
+    }
+
+    @Test
+    void userAccountCannotSpendMoreThanItsBalance() {
+        account.credit(1_000);
+
+        assertThatThrownBy(() -> account.debit(1_001)).isInstanceOf(InsufficientFundsException.class);
+        assertThat(account.getBalanceMinor()).isEqualTo(1_000);
+    }
+
+    @Test
+    void userAccountCanSpendItsWholeBalance() {
+        account.credit(1_000);
+        account.debit(1_000);
+
+        assertThat(account.getBalanceMinor()).isZero();
     }
 
     @Test

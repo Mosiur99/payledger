@@ -13,11 +13,8 @@ import dev.mosiur.payledger.payments.ledger.model.Posting;
 import dev.mosiur.payledger.payments.ledger.model.TransactionResponse;
 import dev.mosiur.payledger.payments.ledger.service.DepositService;
 import dev.mosiur.payledger.payments.ledger.service.LedgerPostingService;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,7 +39,7 @@ public class DepositServiceImpl implements DepositService {
         UUID systemAccountId = accountRepository.findIdByTypeAndCurrency(AccountType.SYSTEM, currency)
                 .orElseThrow(() -> new IllegalStateException("No system account for " + currency));
 
-        Map<UUID, Account> locked = lock(systemAccountId, accountId);
+        Map<UUID, Account> locked = accountRepository.lockByIds(systemAccountId, accountId);
         Account target = locked.get(accountId);
         if (!target.isActive()) {
             throw new AccountFrozenException(accountId);
@@ -56,10 +53,5 @@ public class DepositServiceImpl implements DepositService {
                 request.reference(),
                 initiatedBy));
         return TransactionResponse.of(transaction, accountId, request.amountMinor(), currency);
-    }
-
-    private Map<UUID, Account> lock(UUID... ids) {
-        return accountRepository.lockAllInIdOrder(List.of(ids)).stream()
-                .collect(Collectors.toMap(Account::getId, Function.identity()));
     }
 }

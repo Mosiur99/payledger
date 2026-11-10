@@ -21,7 +21,7 @@ import dev.mosiur.payledger.payments.ledger.model.Posting;
 import dev.mosiur.payledger.payments.ledger.model.TransactionResponse;
 import dev.mosiur.payledger.payments.ledger.service.LedgerPostingService;
 import java.time.Instant;
-import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
@@ -98,8 +98,8 @@ class DepositServiceImplTest {
         when(accountRepository.findCurrency(ayesha.getId(), AccountType.USER)).thenReturn(Optional.of(Currency.BDT));
         when(accountRepository.findIdByTypeAndCurrency(AccountType.SYSTEM, Currency.BDT))
                 .thenReturn(Optional.of(system.getId()));
-        when(accountRepository.lockAllInIdOrder(List.of(system.getId(), ayesha.getId())))
-                .thenReturn(List.of(system, ayesha));
+        when(accountRepository.lockByIds(system.getId(), ayesha.getId()))
+                .thenReturn(Map.of(system.getId(), system, ayesha.getId(), ayesha));
     }
 
     private static Account withId(Account account) {

@@ -58,7 +58,11 @@ public class Account {
     }
 
     public void debit(long amountMinor) {
-        balanceMinor = Math.subtractExact(balanceMinor, requirePositive(amountMinor));
+        requirePositive(amountMinor);
+        if (type == AccountType.USER && balanceMinor < amountMinor) {
+            throw new InsufficientFundsException(id, balanceMinor, amountMinor);
+        }
+        balanceMinor -= amountMinor;
     }
 
     public void credit(long amountMinor) {
@@ -67,6 +71,10 @@ public class Account {
 
     public boolean isActive() {
         return status == AccountStatus.ACTIVE;
+    }
+
+    public boolean isUserAccount() {
+        return type == AccountType.USER;
     }
 
     private static long requirePositive(long amountMinor) {
