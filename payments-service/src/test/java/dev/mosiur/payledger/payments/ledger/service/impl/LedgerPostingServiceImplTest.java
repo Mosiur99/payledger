@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -18,9 +19,11 @@ import dev.mosiur.payledger.payments.ledger.domain.LedgerTransaction;
 import dev.mosiur.payledger.payments.ledger.domain.TransactionStatus;
 import dev.mosiur.payledger.payments.ledger.domain.TransactionType;
 import dev.mosiur.payledger.payments.ledger.model.Posting;
+import dev.mosiur.payledger.payments.ledger.model.TransactionPostedEvent;
 import dev.mosiur.payledger.payments.ledger.repository.LedgerEntryRepository;
 import dev.mosiur.payledger.payments.ledger.repository.LedgerTransactionRepository;
 import dev.mosiur.payledger.payments.ledger.service.CurrencyMismatchException;
+import dev.mosiur.payledger.payments.outbox.service.OutboxService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -45,16 +48,20 @@ class LedgerPostingServiceImplTest {
     @Mock
     private LedgerEntryRepository entryRepository;
 
+    @Mock
+    private OutboxService outboxService;
+
     private LedgerPostingServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new LedgerPostingServiceImpl(transactionRepository, entryRepository, Clock.fixed(NOW, ZoneOffset.UTC));
+        service = new LedgerPostingServiceImpl(
+                transactionRepository, entryRepository, outboxService, Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
     void writesOneDebitAndOneCreditOfTheSameAmount() {
-        when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> call.getArgument(0));
+        when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> withId(call.getArgument(0)));
         Account system = systemAccount(Currency.BDT);
         Account ayesha = account(Currency.BDT);
 
@@ -76,8 +83,24 @@ class LedgerPostingServiceImplTest {
     }
 
     @Test
+    void recordsAnEventInTheSameTransaction() {
+        when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> withId(call.getArgument(0)));
+        Account system = systemAccount(Currency.BDT);
+        Account ayesha = account(Currency.BDT);
+
+        LedgerTransaction transaction = service.post(posting(system, ayesha, 50_000));
+
+        ArgumentCaptor<TransactionPostedEvent> event = ArgumentCaptor.forClass(TransactionPostedEvent.class);
+        verify(outboxService).record(eq(TransactionPostedEvent.TOPIC), eq(transaction.getId().toString()),
+                eq(TransactionPostedEvent.EVENT_TYPE), event.capture());
+        assertThat(event.getValue()).isEqualTo(new TransactionPostedEvent(
+                transaction.getId(), TransactionType.DEPOSIT, system.getId(), "owner", ayesha.getId(), "owner",
+                50_000, Currency.BDT, "top-up", NOW));
+    }
+
+    @Test
     void movesBothBalances() {
-        when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> call.getArgument(0));
+        when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> withId(call.getArgument(0)));
         Account system = systemAccount(Currency.BDT);
         Account ayesha = account(Currency.BDT);
 
@@ -95,7 +118,7 @@ class LedgerPostingServiceImplTest {
         assertThatThrownBy(() -> service.post(posting(bdt, eur, 100)))
                 .isInstanceOf(CurrencyMismatchException.class);
         assertThat(bdt.getBalanceMinor()).isZero();
-        verifyNoInteractions(transactionRepository, entryRepository);
+        verifyNoInteractions(transactionRepository, entryRepository, outboxService);
     }
 
     @Test
@@ -106,7 +129,7 @@ class LedgerPostingServiceImplTest {
         assertThatThrownBy(() -> service.post(posting(ayesha, rahim, 1)))
                 .isInstanceOf(InsufficientFundsException.class);
         assertThat(rahim.getBalanceMinor()).isZero();
-        verifyNoInteractions(transactionRepository, entryRepository);
+        verifyNoInteractions(transactionRepository, entryRepository, outboxService);
     }
 
     @Test
@@ -115,7 +138,12 @@ class LedgerPostingServiceImplTest {
 
         assertThatThrownBy(() -> service.post(posting(ayesha, ayesha, 100)))
                 .isInstanceOf(IllegalArgumentException.class);
-        verifyNoInteractions(transactionRepository, entryRepository);
+        verifyNoInteractions(transactionRepository, entryRepository, outboxService);
+    }
+
+    private static LedgerTransaction withId(LedgerTransaction transaction) {
+        ReflectionTestUtils.setField(transaction, "id", UUID.randomUUID());
+        return transaction;
     }
 
     private static Posting posting(Account debit, Account credit, long amount) {

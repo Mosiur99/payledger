@@ -4,10 +4,12 @@ import dev.mosiur.payledger.payments.account.domain.Account;
 import dev.mosiur.payledger.payments.ledger.domain.LedgerEntry;
 import dev.mosiur.payledger.payments.ledger.domain.LedgerTransaction;
 import dev.mosiur.payledger.payments.ledger.model.Posting;
+import dev.mosiur.payledger.payments.ledger.model.TransactionPostedEvent;
 import dev.mosiur.payledger.payments.ledger.repository.LedgerEntryRepository;
 import dev.mosiur.payledger.payments.ledger.repository.LedgerTransactionRepository;
 import dev.mosiur.payledger.payments.ledger.service.CurrencyMismatchException;
 import dev.mosiur.payledger.payments.ledger.service.LedgerPostingService;
+import dev.mosiur.payledger.payments.outbox.service.OutboxService;
 import java.time.Clock;
 import java.util.List;
 import org.springframework.stereotype.Service;
@@ -19,12 +21,14 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
 
     private final LedgerTransactionRepository transactionRepository;
     private final LedgerEntryRepository entryRepository;
+    private final OutboxService outboxService;
     private final Clock clock;
 
-    public LedgerPostingServiceImpl(
-            LedgerTransactionRepository transactionRepository, LedgerEntryRepository entryRepository, Clock clock) {
+    public LedgerPostingServiceImpl(LedgerTransactionRepository transactionRepository,
+            LedgerEntryRepository entryRepository, OutboxService outboxService, Clock clock) {
         this.transactionRepository = transactionRepository;
         this.entryRepository = entryRepository;
+        this.outboxService = outboxService;
         this.clock = clock;
     }
 
@@ -48,6 +52,9 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
         entryRepository.saveAll(List.of(
                 LedgerEntry.debit(transaction, debit, posting.amountMinor()),
                 LedgerEntry.credit(transaction, credit, posting.amountMinor())));
+        outboxService.record(TransactionPostedEvent.TOPIC, transaction.getId().toString(),
+                TransactionPostedEvent.EVENT_TYPE,
+                TransactionPostedEvent.of(transaction, debit, credit, posting.amountMinor()));
         return transaction;
     }
 }

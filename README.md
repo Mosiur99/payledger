@@ -21,7 +21,7 @@ docker compose -f deploy/compose/docker-compose.yml up -d
 ./mvnw -pl notification-service spring-boot:run
 ```
 
-Compose starts PostgreSQL and Keycloak (http://localhost:8180, admin console login `admin` / `admin`). Check health at http://localhost:8080/actuator/health and http://localhost:8081/actuator/health.
+Compose starts PostgreSQL, Kafka (localhost:9092) and Keycloak (http://localhost:8180, admin console login `admin` / `admin`). Check health at http://localhost:8080/actuator/health and http://localhost:8081/actuator/health.
 
 ## Security
 
@@ -75,6 +75,22 @@ Every movement is a transaction with exactly two ledger entries: a debit on one 
 | Same key, different request | `422` |
 | Server error (`5xx`) | The key is released so the client can retry |
 
+## Events: transactional outbox
+
+Every committed ledger transaction (deposit or transfer) is published to the Kafka topic `payledger.transactions` as a `TransactionPosted` event, keyed by transaction id.
+
+Writing to the database and sending to Kafka directly could leave them out of sync: a crash between the two loses the event, and a rollback after sending publishes money that never moved. So the ledger writes the event to an `outbox_events` table in the same database transaction as the entries. A relay then publishes unpublished rows and stamps `published_at` once Kafka acknowledges them.
+
+| Property | How |
+| --- | --- |
+| No lost events | The event row commits or rolls back with the money movement |
+| No events for rolled-back work | Tested: a rolled-back transfer leaves no row and no message |
+| Several relay instances | Batches are claimed with `FOR UPDATE SKIP LOCKED`, so instances take different rows |
+| Delivery | At least once: a crash after sending but before stamping re-sends the event. Each message carries an `eventId` header so consumers can deduplicate |
+| Producer | `acks=all` with idempotence enabled |
+
+Set `OUTBOX_RELAY_ENABLED=false` to run the service without Kafka.
+
 ## Errors
 
 Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details response (`application/problem+json`) with a stable `type`:
@@ -118,4 +134,4 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 ./mvnw verify
 ```
 
-Integration tests start PostgreSQL in Docker with Testcontainers. API tests sign tokens with a key created for the test run; `KeycloakSecurityIT` starts the real Keycloak realm and checks the 401, 403 and 404 cases end to end.
+Integration tests start PostgreSQL in Docker with Testcontainers. API tests sign tokens with a key created for the test run; `KeycloakSecurityIT` starts the real Keycloak realm and checks the 401, 403 and 404 cases end to end. `OutboxKafkaIT` starts Kafka and checks that each committed transaction is published exactly once and a rolled-back one never is; `OutboxRelayIT` runs four relays at once over the same rows.
