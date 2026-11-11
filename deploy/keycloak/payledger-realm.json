@@ -1,0 +1,67 @@
+{
+  "realm": "payledger",
+  "enabled": true,
+  "sslRequired": "none",
+  "accessTokenLifespan": 900,
+  "roles": {
+    "realm": [
+      { "name": "USER", "description": "Customer: own accounts, transfers and statements" },
+      { "name": "ADMIN", "description": "Operator: deposits money into customer accounts" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "payledger-cli",
+      "name": "PayLedger demo client",
+      "description": "Public client for local demos and tests. A real frontend would use the authorization code flow with PKCE.",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "protocolMappers": [
+        {
+          "name": "payledger-api audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "payledger-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "ayesha",
+      "email": "ayesha@payledger.local",
+      "firstName": "Ayesha",
+      "lastName": "Demo",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "ayesha-demo", "temporary": false }],
+      "realmRoles": ["USER"]
+    },
+    {
+      "username": "rahim",
+      "email": "rahim@payledger.local",
+      "firstName": "Rahim",
+      "lastName": "Demo",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "rahim-demo", "temporary": false }],
+      "realmRoles": ["USER"]
+    },
+    {
+      "username": "ops-admin",
+      "email": "ops-admin@payledger.local",
+      "firstName": "Ops",
+      "lastName": "Admin",
+      "emailVerified": true,
+      "enabled": true,
+      "credentials": [{ "type": "password", "value": "ops-admin-demo", "temporary": false }],
+      "realmRoles": ["ADMIN"]
+    }
+  ]
+}

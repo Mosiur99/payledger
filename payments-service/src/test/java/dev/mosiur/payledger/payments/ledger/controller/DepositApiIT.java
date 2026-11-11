@@ -4,20 +4,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
-import dev.mosiur.payledger.payments.common.web.CallerHeader;
 import dev.mosiur.payledger.payments.idempotency.web.IdempotencyFilter;
 import dev.mosiur.payledger.payments.ledger.model.StatementResponse;
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class DepositApiIT {
 
     @LocalServerPort
@@ -86,6 +87,25 @@ class DepositApiIT {
     }
 
     @Test
+    void onlyAnAdminCanDeposit() {
+        String owner = uniqueOwner();
+        UUID accountId = openAccount(owner, "BDT");
+
+        client.post().uri("/api/v1/deposits")
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
+                .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"accountId\":\"" + accountId + "\",\"amountMinor\":100}")
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.type").isEqualTo("/problems/forbidden");
+
+        statement(owner, accountId, "").expectStatus().isOk()
+                .expectBody().jsonPath("$.balanceMinor").isEqualTo(0);
+    }
+
+    @Test
     void rejectsInvalidAmounts() {
         UUID accountId = openAccount(uniqueOwner(), "BDT");
 
@@ -112,7 +132,7 @@ class DepositApiIT {
 
     private UUID openAccount(String owner, String currency) {
         AccountResponse account = client.post().uri("/api/v1/accounts")
-                .header(CallerHeader.NAME, owner)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"currency\":\"" + currency + "\"}")
                 .exchange()
@@ -126,7 +146,7 @@ class DepositApiIT {
     private RestTestClient.ResponseSpec deposit(UUID accountId, long amount, String reference) {
         String referenceJson = reference == null ? "null" : "\"" + reference + "\"";
         return client.post().uri("/api/v1/deposits")
-                .header(CallerHeader.NAME, "admin")
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.admin("admin"))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"accountId\":\"" + accountId + "\",\"amountMinor\":" + amount
@@ -136,7 +156,7 @@ class DepositApiIT {
 
     private RestTestClient.ResponseSpec statement(String owner, UUID accountId, String query) {
         return client.get().uri("/api/v1/accounts/" + accountId + "/statement" + query)
-                .header(CallerHeader.NAME, owner)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
                 .exchange();
     }
 

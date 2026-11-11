@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -16,7 +17,8 @@ import dev.mosiur.payledger.payments.account.domain.Currency;
 import dev.mosiur.payledger.payments.account.domain.InsufficientFundsException;
 import dev.mosiur.payledger.payments.account.service.AccountFrozenException;
 import dev.mosiur.payledger.payments.account.service.AccountNotFoundException;
-import dev.mosiur.payledger.payments.common.web.CallerHeader;
+import dev.mosiur.payledger.payments.common.security.ProblemSecurityHandler;
+import dev.mosiur.payledger.payments.common.security.SecurityConfig;
 import dev.mosiur.payledger.payments.idempotency.web.IdempotencyFilter;
 import dev.mosiur.payledger.payments.ledger.controller.StatementController;
 import dev.mosiur.payledger.payments.ledger.service.CurrencyMismatchException;
@@ -30,7 +32,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
@@ -38,6 +44,7 @@ import org.springframework.test.web.servlet.ResultActions;
 @WebMvcTest(
         controllers = {TransferController.class, StatementController.class},
         excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = IdempotencyFilter.class))
+@Import({SecurityConfig.class, ProblemSecurityHandler.class, ProblemResponseWriter.class})
 class ErrorResponsesWebTest {
 
     private static final UUID FROM = UUID.fromString("0199a000-0000-7000-8000-000000000001");
@@ -51,6 +58,9 @@ class ErrorResponsesWebTest {
 
     @MockitoBean
     private StatementService statementService;
+
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
 
     @Test
     void insufficientFundsExplainsTheShortfall() throws Exception {
@@ -125,15 +135,25 @@ class ErrorResponsesWebTest {
     }
 
     @Test
-    void missingCallerHeaderIsAValidationProblem() throws Exception {
+    void missingTokenIsUnauthenticated() throws Exception {
         mvc.perform(post("/api/v1/transfers").contentType(MediaType.APPLICATION_JSON).content(validBody()))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.type").value("/problems/validation"));
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.type").value("/problems/unauthenticated"))
+                .andExpect(jsonPath("$.instance").value("/api/v1/transfers"));
+    }
+
+    @Test
+    void wrongRoleIsForbidden() throws Exception {
+        mvc.perform(get("/api/v1/accounts/" + FROM + "/statement")
+                        .with(jwt().authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.type").value("/problems/forbidden"));
     }
 
     @Test
     void invalidQueryParameterIsListed() throws Exception {
-        mvc.perform(get("/api/v1/accounts/" + FROM + "/statement?limit=500").header(CallerHeader.NAME, "ayesha"))
+        mvc.perform(get("/api/v1/accounts/" + FROM + "/statement?limit=500").with(ayesha()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("/problems/validation"))
                 .andExpect(jsonPath("$.errors[0].field").value("limit"));
@@ -141,7 +161,7 @@ class ErrorResponsesWebTest {
 
     @Test
     void malformedIdInThePathIsAValidationProblem() throws Exception {
-        mvc.perform(get("/api/v1/accounts/not-a-uuid/statement").header(CallerHeader.NAME, "ayesha"))
+        mvc.perform(get("/api/v1/accounts/not-a-uuid/statement").with(ayesha()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("/problems/validation"));
     }
@@ -151,7 +171,7 @@ class ErrorResponsesWebTest {
         when(statementService.statement(anyString(), any(), any(), anyInt()))
                 .thenThrow(new IllegalStateException("password=secret in connection string"));
 
-        mvc.perform(get("/api/v1/accounts/" + FROM + "/statement").header(CallerHeader.NAME, "ayesha"))
+        mvc.perform(get("/api/v1/accounts/" + FROM + "/statement").with(ayesha()))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.type").value("/problems/internal"))
                 .andExpect(content().string(not(containsString("secret"))));
@@ -159,9 +179,13 @@ class ErrorResponsesWebTest {
 
     private ResultActions transfer(String body) throws Exception {
         return mvc.perform(post("/api/v1/transfers")
-                .header(CallerHeader.NAME, "ayesha")
+                .with(ayesha())
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(body));
+    }
+
+    private static JwtRequestPostProcessor ayesha() {
+        return jwt().jwt(token -> token.subject("ayesha")).authorities(new SimpleGrantedAuthority("ROLE_USER"));
     }
 
     private static String validBody() {

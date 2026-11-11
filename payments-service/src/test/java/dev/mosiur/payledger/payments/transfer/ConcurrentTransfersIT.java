@@ -10,6 +10,7 @@ import dev.mosiur.payledger.payments.account.service.AccountService;
 import dev.mosiur.payledger.payments.ledger.model.DepositRequest;
 import dev.mosiur.payledger.payments.ledger.service.DepositService;
 import dev.mosiur.payledger.payments.support.LedgerAssertions;
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import dev.mosiur.payledger.payments.transfer.model.TransferRequest;
 import dev.mosiur.payledger.payments.transfer.service.TransferService;
 import java.util.ArrayList;
@@ -28,7 +29,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 @SpringBootTest
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class ConcurrentTransfersIT {
 
     private static final int ACCOUNTS = 6;

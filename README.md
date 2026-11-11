@@ -21,11 +21,26 @@ docker compose -f deploy/compose/docker-compose.yml up -d
 ./mvnw -pl notification-service spring-boot:run
 ```
 
-Check health at http://localhost:8080/actuator/health and http://localhost:8081/actuator/health.
+Compose starts PostgreSQL and Keycloak (http://localhost:8180, admin console login `admin` / `admin`). Check health at http://localhost:8080/actuator/health and http://localhost:8081/actuator/health.
+
+## Security
+
+payments-service is an OAuth2 resource server. Every API call needs a Keycloak access token; the service checks its signature, issuer, expiry and audience (`payledger-api`). The caller's id is the token's `sub` claim, so nobody can act as another user by changing a header or a field.
+
+| Role | Can do |
+| --- | --- |
+| `USER` | Open and read their own accounts, transfer from them, read statements |
+| `ADMIN` | Deposit money into any account |
+
+The realm is imported from `deploy/keycloak/payledger-realm.json` with three demo users: `ayesha` / `ayesha-demo` and `rahim` / `rahim-demo` (USER), and `ops-admin` / `ops-admin-demo` (ADMIN). These passwords are for local demos only. The demo client `payledger-cli` uses the password grant to keep curl and Postman simple; a real frontend would use the authorization code flow with PKCE.
+
+```sh
+TOKEN=$(curl -s localhost:8180/realms/payledger/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=payledger-cli -d username=ayesha -d password=ayesha-demo \
+  | jq -r .access_token)
+```
 
 ## API
-
-Until authentication is added, the caller is identified by the `X-Owner-Id` header.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -33,12 +48,12 @@ Until authentication is added, the caller is identified by the `X-Owner-Id` head
 | `GET` | `/api/v1/accounts` | List the caller's accounts, oldest first |
 | `GET` | `/api/v1/accounts/{id}` | Read one of the caller's accounts |
 | `GET` | `/api/v1/accounts/{id}/statement?limit=50&before={entryId}` | Ledger entries, newest first, with a cursor for older pages |
-| `POST` | `/api/v1/deposits` | Fund an account from the system account of its currency |
+| `POST` | `/api/v1/deposits` | Fund an account from the system account of its currency (ADMIN only) |
 | `POST` | `/api/v1/transfers` | Move money from one of the caller's accounts to another account in the same currency |
 
 ```sh
 curl -X POST localhost:8080/api/v1/accounts \
-  -H 'X-Owner-Id: ayesha' -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"currency":"BDT"}'
 ```
 
@@ -81,6 +96,8 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 | --- | --- | --- |
 | `/problems/validation` | 400 | Invalid or missing fields, headers or parameters; listed under `errors` |
 | `/problems/idempotency-key-required` | 400 | Missing `Idempotency-Key` |
+| `/problems/unauthenticated` | 401 | Missing, expired or invalid access token |
+| `/problems/forbidden` | 403 | The caller's role does not allow the operation |
 | `/problems/account-not-found` | 404 | Unknown account, or one the caller does not own |
 | `/problems/account-frozen` | 409 | A frozen account |
 | `/problems/idempotency-in-progress` | 409 | The first request with this key is still running |
@@ -93,7 +110,7 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 ## API docs and demo
 
 - Swagger UI: http://localhost:8080/swagger-ui.html (OpenAPI JSON at `/v3/api-docs`)
-- Postman: import `docs/postman/PayLedger.postman_collection.json` and run it top to bottom. It opens two accounts, deposits, transfers, shows an insufficient-funds error and reads the statement.
+- Postman: import `docs/postman/PayLedger.postman_collection.json` and run it top to bottom. It logs in the three demo users, opens two accounts, deposits, transfers, shows an insufficient-funds error and reads the statement.
 
 ## Test
 
@@ -101,4 +118,4 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 ./mvnw verify
 ```
 
-Integration tests start PostgreSQL in Docker with Testcontainers.
+Integration tests start PostgreSQL in Docker with Testcontainers. API tests sign tokens with a key created for the test run; `KeycloakSecurityIT` starts the real Keycloak realm and checks the 401, 403 and 404 cases end to end.

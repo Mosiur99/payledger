@@ -1,18 +1,171 @@
 {
   "info": {
     "name": "PayLedger",
-    "description": "Run the requests in order against a local payments-service. Each money-moving request gets a fresh Idempotency-Key.",
+    "description": "Start Keycloak and PostgreSQL with Docker Compose, run payments-service, then run the requests in order. The first three requests log in the demo users and store their access tokens. Each money-moving request gets a fresh Idempotency-Key.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
+    {
+      "name": "0a. Log in as Ayesha (USER)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('logged in', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('ayeshaToken', pm.response.json().access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password"
+            },
+            {
+              "key": "client_id",
+              "value": "payledger-cli"
+            },
+            {
+              "key": "username",
+              "value": "ayesha"
+            },
+            {
+              "key": "password",
+              "value": "ayesha-demo"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{keycloakUrl}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        }
+      }
+    },
+    {
+      "name": "0b. Log in as Rahim (USER)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('logged in', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('rahimToken', pm.response.json().access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password"
+            },
+            {
+              "key": "client_id",
+              "value": "payledger-cli"
+            },
+            {
+              "key": "username",
+              "value": "rahim"
+            },
+            {
+              "key": "password",
+              "value": "rahim-demo"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{keycloakUrl}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        }
+      }
+    },
+    {
+      "name": "0c. Log in as ops-admin (ADMIN)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('logged in', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('adminToken', pm.response.json().access_token);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "grant_type",
+              "value": "password"
+            },
+            {
+              "key": "client_id",
+              "value": "payledger-cli"
+            },
+            {
+              "key": "username",
+              "value": "ops-admin"
+            },
+            {
+              "key": "password",
+              "value": "ops-admin-demo"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{keycloakUrl}}/protocol/openid-connect/token",
+          "host": [
+            "{{keycloakUrl}}"
+          ],
+          "path": [
+            "protocol",
+            "openid-connect",
+            "token"
+          ]
+        }
+      }
+    },
     {
       "name": "1. Open Ayesha's BDT account",
       "request": {
         "method": "POST",
         "header": [
           {
-            "key": "X-Owner-Id",
-            "value": "{{owner}}"
+            "key": "Authorization",
+            "value": "Bearer {{ayeshaToken}}"
           },
           {
             "key": "Content-Type",
@@ -44,8 +197,8 @@
         "method": "POST",
         "header": [
           {
-            "key": "X-Owner-Id",
-            "value": "{{receiver}}"
+            "key": "Authorization",
+            "value": "Bearer {{rahimToken}}"
           },
           {
             "key": "Content-Type",
@@ -77,8 +230,8 @@
         "method": "POST",
         "header": [
           {
-            "key": "X-Owner-Id",
-            "value": "admin"
+            "key": "Authorization",
+            "value": "Bearer {{adminToken}}"
           },
           {
             "key": "Idempotency-Key",
@@ -113,8 +266,8 @@
         "method": "POST",
         "header": [
           {
-            "key": "X-Owner-Id",
-            "value": "{{owner}}"
+            "key": "Authorization",
+            "value": "Bearer {{ayeshaToken}}"
           },
           {
             "key": "Idempotency-Key",
@@ -149,8 +302,8 @@
         "method": "POST",
         "header": [
           {
-            "key": "X-Owner-Id",
-            "value": "{{owner}}"
+            "key": "Authorization",
+            "value": "Bearer {{ayeshaToken}}"
           },
           {
             "key": "Idempotency-Key",
@@ -188,8 +341,8 @@
         "method": "GET",
         "header": [
           {
-            "key": "X-Owner-Id",
-            "value": "{{owner}}"
+            "key": "Authorization",
+            "value": "Bearer {{ayeshaToken}}"
           }
         ],
         "url": "{{baseUrl}}/api/v1/accounts"
@@ -201,8 +354,8 @@
         "method": "GET",
         "header": [
           {
-            "key": "X-Owner-Id",
-            "value": "{{owner}}"
+            "key": "Authorization",
+            "value": "Bearer {{ayeshaToken}}"
           }
         ],
         "url": "{{baseUrl}}/api/v1/accounts/{{accountId}}/statement?limit=50"
@@ -215,12 +368,8 @@
       "value": "http://localhost:8080"
     },
     {
-      "key": "owner",
-      "value": "ayesha"
-    },
-    {
-      "key": "receiver",
-      "value": "rahim"
+      "key": "keycloakUrl",
+      "value": "http://localhost:8180/realms/payledger"
     },
     {
       "key": "accountId",
@@ -228,6 +377,18 @@
     },
     {
       "key": "receiverAccountId",
+      "value": ""
+    },
+    {
+      "key": "ayeshaToken",
+      "value": ""
+    },
+    {
+      "key": "rahimToken",
+      "value": ""
+    },
+    {
+      "key": "adminToken",
       "value": ""
     }
   ]

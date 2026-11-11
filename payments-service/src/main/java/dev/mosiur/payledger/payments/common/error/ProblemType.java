@@ -7,6 +7,8 @@ import org.springframework.http.HttpStatus;
 public enum ProblemType {
 
     VALIDATION("validation", "Invalid request", HttpStatus.BAD_REQUEST),
+    UNAUTHENTICATED("unauthenticated", "Authentication required", HttpStatus.UNAUTHORIZED),
+    FORBIDDEN("forbidden", "Access denied", HttpStatus.FORBIDDEN),
     ACCOUNT_NOT_FOUND("account-not-found", "Account not found", HttpStatus.NOT_FOUND),
     ACCOUNT_FROZEN("account-frozen", "Account frozen", HttpStatus.CONFLICT),
     INSUFFICIENT_FUNDS("insufficient-funds", "Insufficient funds", HttpStatus.UNPROCESSABLE_CONTENT),

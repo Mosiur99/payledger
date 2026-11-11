@@ -11,7 +11,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import dev.mosiur.payledger.payments.common.web.CallerHeader;
+import dev.mosiur.payledger.payments.common.error.ProblemResponseWriter;
 import dev.mosiur.payledger.payments.idempotency.domain.IdempotencyDecision;
 import dev.mosiur.payledger.payments.idempotency.domain.StoredResponse;
 import dev.mosiur.payledger.payments.idempotency.service.IdempotencyService;
@@ -19,6 +19,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +28,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,8 +45,14 @@ class IdempotencyFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new IdempotencyFilter(idempotencyService, JsonMapper.builder().build());
+        filter = new IdempotencyFilter(idempotencyService, new ProblemResponseWriter(JsonMapper.builder().build()));
         response = new MockHttpServletResponse();
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken("ayesha", null, "ROLE_USER"));
+    }
+
+    @AfterEach
+    void clearCaller() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test
@@ -165,9 +174,19 @@ class IdempotencyFilterTest {
         verifyNoInteractions(idempotencyService);
     }
 
+    @Test
+    void leavesUnauthenticatedRequestsToSpringSecurity() throws Exception {
+        SecurityContextHolder.clearContext();
+        AtomicReference<Boolean> ran = new AtomicReference<>(false);
+
+        filter.doFilter(request("k1"), response, (req, res) -> ran.set(true));
+
+        assertThat(ran.get()).isTrue();
+        verifyNoInteractions(idempotencyService);
+    }
+
     private static MockHttpServletRequest request(String key) {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/v1/transfers");
-        request.addHeader(CallerHeader.NAME, "ayesha");
         if (key != null) {
             request.addHeader(IdempotencyFilter.KEY_HEADER, key);
         }

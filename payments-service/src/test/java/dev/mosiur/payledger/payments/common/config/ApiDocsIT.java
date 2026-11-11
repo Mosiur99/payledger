@@ -1,6 +1,7 @@
 package dev.mosiur.payledger.payments.common.config;
 
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -9,7 +10,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class ApiDocsIT {
 
     @LocalServerPort
@@ -34,7 +35,9 @@ class ApiDocsIT {
                 .jsonPath("$.paths['/api/v1/transfers'].post.parameters[?(@.name == 'Idempotency-Key')].required")
                 .isEqualTo(true)
                 .jsonPath("$.paths['/api/v1/deposits'].post.parameters[?(@.name == 'Idempotency-Key')]").exists()
-                .jsonPath("$.paths['/api/v1/accounts'].get.parameters[?(@.name == 'Idempotency-Key')]").doesNotExist();
+                .jsonPath("$.paths['/api/v1/accounts'].get.parameters").doesNotExist()
+                .jsonPath("$.components.securitySchemes['bearer-jwt'].scheme").isEqualTo("bearer")
+                .jsonPath("$.security[0]['bearer-jwt']").exists();
     }
 
     @Test

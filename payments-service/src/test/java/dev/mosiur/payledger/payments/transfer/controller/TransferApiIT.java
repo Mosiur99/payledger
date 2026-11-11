@@ -4,19 +4,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
-import dev.mosiur.payledger.payments.common.web.CallerHeader;
 import dev.mosiur.payledger.payments.idempotency.web.IdempotencyFilter;
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class TransferApiIT {
 
     @LocalServerPort
@@ -113,7 +114,7 @@ class TransferApiIT {
 
         transfer(ayesha, from, to, 0).expectStatus().isBadRequest();
         client.post().uri("/api/v1/transfers")
-                .header(CallerHeader.NAME, ayesha)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(ayesha))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"fromAccountId\":\"" + from + "\",\"amountMinor\":100}")
@@ -123,7 +124,7 @@ class TransferApiIT {
 
     private UUID openAccount(String owner, String currency) {
         AccountResponse account = client.post().uri("/api/v1/accounts")
-                .header(CallerHeader.NAME, owner)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"currency\":\"" + currency + "\"}")
                 .exchange()
@@ -136,7 +137,7 @@ class TransferApiIT {
 
     private void deposit(UUID accountId, long amount) {
         client.post().uri("/api/v1/deposits")
-                .header(CallerHeader.NAME, "admin")
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.admin("admin"))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"accountId\":\"" + accountId + "\",\"amountMinor\":" + amount + "}")
@@ -146,7 +147,7 @@ class TransferApiIT {
 
     private RestTestClient.ResponseSpec transfer(String caller, UUID from, UUID to, long amount) {
         return client.post().uri("/api/v1/transfers")
-                .header(CallerHeader.NAME, caller)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(caller))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"fromAccountId\":\"" + from + "\",\"toAccountId\":\"" + to
@@ -156,7 +157,7 @@ class TransferApiIT {
 
     private RestTestClient.BodyContentSpec statement(String owner, UUID accountId) {
         return client.get().uri("/api/v1/accounts/" + accountId + "/statement")
-                .header(CallerHeader.NAME, owner)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody();

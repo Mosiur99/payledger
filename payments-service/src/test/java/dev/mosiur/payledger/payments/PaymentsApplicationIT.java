@@ -1,5 +1,6 @@
 package dev.mosiur.payledger.payments;
 
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -8,7 +9,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class PaymentsApplicationIT {
 
     @LocalServerPort

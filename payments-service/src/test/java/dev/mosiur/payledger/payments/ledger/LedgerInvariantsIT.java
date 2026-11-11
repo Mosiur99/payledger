@@ -10,6 +10,7 @@ import dev.mosiur.payledger.payments.account.service.AccountService;
 import dev.mosiur.payledger.payments.ledger.model.DepositRequest;
 import dev.mosiur.payledger.payments.ledger.service.DepositService;
 import dev.mosiur.payledger.payments.support.LedgerAssertions;
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -24,7 +25,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 @SpringBootTest
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class LedgerInvariantsIT {
 
     private static final int ACCOUNTS = 4;

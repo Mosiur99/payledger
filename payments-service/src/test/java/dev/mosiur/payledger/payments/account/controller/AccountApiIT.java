@@ -4,18 +4,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
-import dev.mosiur.payledger.payments.common.web.CallerHeader;
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class AccountApiIT {
 
     private static final String ACCOUNTS = "/api/v1/accounts";
@@ -42,7 +43,7 @@ class AccountApiIT {
 
         assertThat(opened).isNotNull();
         client.get().uri(ACCOUNTS + "/" + opened.id())
-                .header(CallerHeader.NAME, owner)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -60,7 +61,7 @@ class AccountApiIT {
         open(rahim, "{\"currency\":\"USD\"}").expectStatus().isCreated();
 
         client.get().uri(ACCOUNTS)
-                .header(CallerHeader.NAME, ayesha)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(ayesha))
                 .exchange()
                 .expectStatus().isOk()
                 .expectBody()
@@ -77,7 +78,7 @@ class AccountApiIT {
 
         assertThat(ayeshas).isNotNull();
         client.get().uri(ACCOUNTS + "/" + ayeshas.id())
-                .header(CallerHeader.NAME, uniqueOwner())
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(uniqueOwner()))
                 .exchange()
                 .expectStatus().isNotFound();
     }
@@ -89,22 +90,35 @@ class AccountApiIT {
     }
 
     @Test
-    void rejectsARequestWithoutAnOwner() {
+    void rejectsARequestWithoutAValidToken() {
         client.post().uri(ACCOUNTS)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"currency\":\"BDT\"}")
                 .exchange()
-                .expectStatus().isBadRequest();
+                .expectStatus().isUnauthorized()
+                .expectHeader().valueMatches(HttpHeaders.WWW_AUTHENTICATE, "Bearer.*")
+                .expectBody()
+                .jsonPath("$.type").isEqualTo("/problems/unauthenticated");
 
         client.get().uri(ACCOUNTS)
-                .header(CallerHeader.NAME, " ")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer not-a-real-token")
                 .exchange()
-                .expectStatus().isBadRequest();
+                .expectStatus().isUnauthorized();
+    }
+
+    @Test
+    void rejectsACallerWithoutTheUserRole() {
+        client.get().uri(ACCOUNTS)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.admin("admin"))
+                .exchange()
+                .expectStatus().isForbidden()
+                .expectBody()
+                .jsonPath("$.type").isEqualTo("/problems/forbidden");
     }
 
     private RestTestClient.ResponseSpec open(String owner, String json) {
         return client.post().uri(ACCOUNTS)
-                .header(CallerHeader.NAME, owner)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(json)
                 .exchange();

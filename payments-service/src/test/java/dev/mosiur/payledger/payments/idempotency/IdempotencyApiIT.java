@@ -4,8 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.mosiur.payledger.payments.PostgresTestConfiguration;
 import dev.mosiur.payledger.payments.account.model.AccountResponse;
-import dev.mosiur.payledger.payments.common.web.CallerHeader;
 import dev.mosiur.payledger.payments.idempotency.web.IdempotencyFilter;
+import dev.mosiur.payledger.payments.support.TestJwtConfiguration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -15,17 +15,18 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.web.servlet.client.EntityExchangeResult;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, TestJwtConfiguration.class})
 class IdempotencyApiIT {
 
     @LocalServerPort
@@ -79,7 +80,7 @@ class IdempotencyApiIT {
     @Test
     void aTransferWithoutAKeyIsRefused() {
         client.post().uri("/api/v1/transfers")
-                .header(CallerHeader.NAME, ayesha)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(ayesha))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(transferBody(100))
                 .exchange()
@@ -107,7 +108,7 @@ class IdempotencyApiIT {
 
         transfer(sharedKey, 1_000).expectStatus().isCreated();
         client.post().uri("/api/v1/transfers")
-                .header(CallerHeader.NAME, rahim)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(rahim))
                 .header(IdempotencyFilter.KEY_HEADER, sharedKey)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"fromAccountId\":\"" + rahimsAccount + "\",\"toAccountId\":\"" + from + "\",\"amountMinor\":1}")
@@ -140,7 +141,7 @@ class IdempotencyApiIT {
 
     private RestTestClient.ResponseSpec transfer(String key, long amount) {
         return client.post().uri("/api/v1/transfers")
-                .header(CallerHeader.NAME, ayesha)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(ayesha))
                 .header(IdempotencyFilter.KEY_HEADER, key)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(transferBody(amount))
@@ -153,7 +154,7 @@ class IdempotencyApiIT {
 
     private UUID openAccount(String owner) {
         AccountResponse account = client.post().uri("/api/v1/accounts")
-                .header(CallerHeader.NAME, owner)
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.user(owner))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"currency\":\"BDT\"}")
                 .exchange()
@@ -166,7 +167,7 @@ class IdempotencyApiIT {
 
     private void deposit(UUID accountId, long amount) {
         client.post().uri("/api/v1/deposits")
-                .header(CallerHeader.NAME, "admin")
+                .header(HttpHeaders.AUTHORIZATION, TestJwtConfiguration.admin("admin"))
                 .header(IdempotencyFilter.KEY_HEADER, UUID.randomUUID().toString())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"accountId\":\"" + accountId + "\",\"amountMinor\":" + amount + "}")

@@ -1,7 +1,7 @@
 package dev.mosiur.payledger.payments.idempotency.web;
 
+import dev.mosiur.payledger.payments.common.error.ProblemResponseWriter;
 import dev.mosiur.payledger.payments.common.error.ProblemType;
-import dev.mosiur.payledger.payments.common.web.CallerHeader;
 import dev.mosiur.payledger.payments.idempotency.domain.IdempotencyDecision;
 import dev.mosiur.payledger.payments.idempotency.domain.StoredResponse;
 import dev.mosiur.payledger.payments.idempotency.service.IdempotencyService;
@@ -14,19 +14,18 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.Set;
 import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
-import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Makes money-moving POST requests safe to retry: the first request with a key runs,
  * repeats of the same request get the stored response, and anything else is refused.
+ * Runs after Spring Security, so the caller is already authenticated and keys are scoped per caller.
  */
 @Component
 public class IdempotencyFilter extends OncePerRequestFilter {
@@ -38,11 +37,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private static final int MAX_LENGTH = 64;
 
     private final IdempotencyService idempotencyService;
-    private final JsonMapper jsonMapper;
+    private final ProblemResponseWriter problemWriter;
 
-    public IdempotencyFilter(IdempotencyService idempotencyService, JsonMapper jsonMapper) {
+    public IdempotencyFilter(IdempotencyService idempotencyService, ProblemResponseWriter problemWriter) {
         this.idempotencyService = idempotencyService;
-        this.jsonMapper = jsonMapper;
+        this.problemWriter = problemWriter;
     }
 
     @Override
@@ -53,14 +52,15 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String owner = request.getHeader(CallerHeader.NAME);
-        if (!isValid(owner)) {
+        Authentication caller = SecurityContextHolder.getContext().getAuthentication();
+        if (caller == null || !caller.isAuthenticated()) {
             chain.doFilter(request, response);
             return;
         }
+        String owner = caller.getName();
         String key = request.getHeader(KEY_HEADER);
         if (!isValid(key)) {
-            writeProblem(request, response, ProblemType.IDEMPOTENCY_KEY_REQUIRED,
+            problemWriter.write(request, response, ProblemType.IDEMPOTENCY_KEY_REQUIRED,
                     "Send a unique " + KEY_HEADER + " header of 1 to " + MAX_LENGTH + " characters.");
             return;
         }
@@ -71,9 +71,9 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         switch (idempotencyService.begin(owner, key, requestHash)) {
             case IdempotencyDecision.Proceed() -> execute(cachedRequest, response, chain, owner, key);
             case IdempotencyDecision.Replay(StoredResponse stored) -> replay(response, stored);
-            case IdempotencyDecision.InProgress() -> writeProblem(request, response,
+            case IdempotencyDecision.InProgress() -> problemWriter.write(request, response,
                     ProblemType.IDEMPOTENCY_IN_PROGRESS, "A request with this idempotency key is still being processed.");
-            case IdempotencyDecision.KeyReused() -> writeProblem(request, response,
+            case IdempotencyDecision.KeyReused() -> problemWriter.write(request, response,
                     ProblemType.IDEMPOTENCY_KEY_REUSED, "This idempotency key was already used for a different request.");
         }
     }
@@ -108,20 +108,6 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         if (stored.body() != null) {
             response.getOutputStream().write(stored.body().getBytes(StandardCharsets.UTF_8));
         }
-    }
-
-    /** Written by hand because filters run outside Spring MVC's exception handling. */
-    private void writeProblem(HttpServletRequest request, HttpServletResponse response, ProblemType type,
-            String detail) throws IOException {
-        Map<String, Object> problem = new LinkedHashMap<>();
-        problem.put("type", type.type().toString());
-        problem.put("title", type.title());
-        problem.put("status", type.status().value());
-        problem.put("detail", detail);
-        problem.put("instance", request.getRequestURI());
-        response.setStatus(type.status().value());
-        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
-        response.getOutputStream().write(jsonMapper.writeValueAsBytes(problem));
     }
 
     private static boolean isValid(String header) {

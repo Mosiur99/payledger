@@ -17,5 +17,17 @@ services:
       timeout: 3s
       retries: 10
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm", "--http-port=8180"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8180:8180"
+    volumes:
+      - ../keycloak/payledger-realm.json:/opt/keycloak/data/import/payledger-realm.json:ro
+
 volumes:
   postgres-data:
