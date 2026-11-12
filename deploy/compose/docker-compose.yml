@@ -29,10 +29,85 @@ services:
     volumes:
       - ../keycloak/payledger-realm.json:/opt/keycloak/data/import/payledger-realm.json:ro
 
+  # Two listeners: localhost:9092 for apps on the host, kafka:19092 for apps inside Compose.
   kafka:
     image: apache/kafka:4.2.2
     ports:
       - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: HOST://:9092,DOCKER://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,DOCKER://kafka:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:PLAINTEXT,DOCKER:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+  # Optional: docker compose --profile apps up -d --build
+  payments-service:
+    build:
+      context: ../..
+      args:
+        SERVICE: payments-service
+    image: ghcr.io/mosiur99/payledger-payments-service:local
+    profiles: ["apps"]
+    ports:
+      - "8080:8080"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/payments
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      # Tokens are issued to clients at localhost:8180, so that stays the expected issuer;
+      # the signing keys are fetched over the Compose network.
+      JWT_ISSUER_URI: http://localhost:8180/realms/payledger
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWKSETURI: http://keycloak:8180/realms/payledger/protocol/openid-connect/certs
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -Xmx256m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  notification-service:
+    build:
+      context: ../..
+      args:
+        SERVICE: notification-service
+    image: ghcr.io/mosiur99/payledger-notification-service:local
+    profiles: ["apps"]
+    ports:
+      - "8081:8081"
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/notifications
+      KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+      OTLP_TRACING_ENDPOINT: http://jaeger:4318/v1/traces
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75 -Xmx256m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
 
   # Optional: docker compose --profile observability up -d
   jaeger:

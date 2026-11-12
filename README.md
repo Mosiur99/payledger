@@ -1,5 +1,7 @@
 # PayLedger
 
+[![CI](https://github.com/Mosiur99/payledger/actions/workflows/ci.yml/badge.svg)](https://github.com/Mosiur99/payledger/actions/workflows/ci.yml)
+
 A double-entry ledger and payments platform built with Java and Spring Boot: accounts, deposits and transfers with idempotency keys, a transactional outbox to Kafka, and a separate notification service.
 
 > Work in progress. The design and build plan are being implemented in small, tested parts.
@@ -22,6 +24,30 @@ docker compose -f deploy/compose/docker-compose.yml up -d
 ```
 
 Compose starts PostgreSQL, Kafka (localhost:9092) and Keycloak (http://localhost:8180, admin console login `admin` / `admin`). Check health at http://localhost:8080/actuator/health and http://localhost:8081/actuator/health.
+
+### Run everything in Docker
+
+```sh
+docker compose -f deploy/compose/docker-compose.yml --profile apps up -d --build
+```
+
+This builds both services from the root `Dockerfile` and runs them next to the infrastructure on the same ports, so the curl examples, Postman collection and Prometheus scraping work unchanged. Add `--profile observability` to send traces to Jaeger as well.
+
+Inside Compose the services reach Kafka at `kafka:19092`; Kafka also advertises `localhost:9092` for services started with Maven. Keycloak signs tokens with the issuer `http://localhost:8180/...` that clients see, so payments-service keeps that as the expected issuer and fetches the signing keys from `http://keycloak:8180` over the Compose network.
+
+## Container images
+
+One multi-stage `Dockerfile` builds either service (`--build-arg SERVICE=payments-service` or `notification-service`):
+
+- The build stage packages the jar with the Maven wrapper and splits it into Spring Boot layers: dependencies, loader, snapshot dependencies and application code. A code change rebuilds only the last, small layer.
+- The runtime stage is a JRE on Alpine, runs as an unprivileged user (uid 10001) and sizes the heap from the container's memory limit (`MaxRAMPercentage=75`).
+
+## Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`:
+
+1. `./mvnw verify`: all unit and Testcontainers integration tests, using the runner's Docker. Test reports are uploaded when something fails.
+2. Both images are built. On `main` they are pushed to GitHub Container Registry as `ghcr.io/mosiur99/payledger-payments-service` and `ghcr.io/mosiur99/payledger-notification-service`, tagged `latest` and `sha-<commit>`. Pull requests only build them.
 
 ## Security
 
