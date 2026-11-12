@@ -1,0 +1,8 @@
+PayLedger is installed in namespace {{ .Release.Namespace }}.
+
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/part-of=payledger
+{{- range $name, $svc := .Values.services }}
+{{- if and $svc.enabled (eq $svc.service.type "NodePort") }}
+  {{ $name }}: NodePort {{ $svc.service.nodePort }}
+{{- end }}
+{{- end }}

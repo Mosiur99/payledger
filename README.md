@@ -42,11 +42,37 @@ One multi-stage `Dockerfile` builds either service (`--build-arg SERVICE=payment
 - The build stage packages the jar with the Maven wrapper and splits it into Spring Boot layers: dependencies, loader, snapshot dependencies and application code. A code change rebuilds only the last, small layer.
 - The runtime stage is a JRE on Alpine, runs as an unprivileged user (uid 10001) and sizes the heap from the container's memory limit (`MaxRAMPercentage=75`).
 
+## Kubernetes (Helm on kind)
+
+Requirements: Docker, [kind](https://kind.sigs.k8s.io/), kubectl and Helm.
+
+```sh
+deploy/kind/up.sh     # cluster, images, infrastructure and the Helm release
+deploy/kind/down.sh   # delete the cluster
+```
+
+The script creates a one-node kind cluster, builds both images and loads them into it, starts PostgreSQL, Kafka and Keycloak from `deploy/kind/infra.yaml` and installs the chart in `deploy/helm/payledger` with `deploy/kind/values-kind.yaml`. The services, and Keycloak, are reachable on the same localhost ports as with Compose, so the curl examples and the Postman collection work unchanged.
+
+The infrastructure manifests are for development only; in production PostgreSQL, Kafka and the identity provider would be managed services, and the chart only needs their addresses.
+
+What the chart sets up for each service:
+
+| Concern | How |
+| --- | --- |
+| Configuration | A ConfigMap per service; database credentials in a Secret (or `database.existingSecret`) |
+| Probes | Startup and liveness use `/actuator/health/liveness`. Readiness uses `/actuator/health/readiness`, which includes the database, so a pod that loses its database stops getting traffic instead of being restarted |
+| Shutdown | A 5 second `preStop` sleep lets the Service stop routing to the pod before Spring's graceful shutdown starts |
+| Resources | Memory requests and limits; the JVM heap is 75% of the limit |
+| Security | Non-root user, read-only root filesystem (with a writable `/tmp`), no privilege escalation, all capabilities dropped, no service account token |
+| Rollouts | A hash of the ConfigMap and Secret in the pod template, so a config change restarts the pods |
+
+`payments-service` runs two replicas by default; the outbox relays share the work through `FOR UPDATE SKIP LOCKED`.
+
 ## Continuous integration
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request and every push to `main`:
 
-1. `./mvnw verify`: all unit and Testcontainers integration tests, using the runner's Docker. Test reports are uploaded when something fails.
+1. `./mvnw verify`: all unit and Testcontainers integration tests, using the runner's Docker. Test reports are uploaded when something fails. In parallel, `helm lint` checks the chart with its default and kind values.
 2. Both images are built. On `main` they are pushed to GitHub Container Registry as `ghcr.io/mosiur99/payledger-payments-service` and `ghcr.io/mosiur99/payledger-notification-service`, tagged `latest` and `sha-<commit>`. Pull requests only build them.
 
 ## Security

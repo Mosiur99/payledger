@@ -1,0 +1,20 @@
+image:
+  tag: local
+  pullPolicy: Never
+
+services:
+  payments-service:
+    replicas: 1
+    service:
+      type: NodePort
+      nodePort: 30080
+    resources:
+      requests: {cpu: 50m, memory: 320Mi}
+      limits: {memory: 384Mi}
+  notification-service:
+    service:
+      type: NodePort
+      nodePort: 30081
+    resources:
+      requests: {cpu: 50m, memory: 288Mi}
+      limits: {memory: 352Mi}

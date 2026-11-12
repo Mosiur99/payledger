@@ -25,6 +25,15 @@ server:
   port: ${PORT:8081}
 
 management:
+  # Kubernetes probes: liveness restarts a stuck app; readiness takes it out of the Service while the database is down.
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+          show-components: always
   endpoints:
     web:
       exposure:

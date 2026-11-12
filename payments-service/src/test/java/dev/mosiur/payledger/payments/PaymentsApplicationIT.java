@@ -30,4 +30,20 @@ class PaymentsApplicationIT {
                 .expectBody()
                 .jsonPath("$.status").isEqualTo("UP");
     }
+
+    @Test
+    void exposesKubernetesProbesWithoutAToken() {
+        client.get().uri("/actuator/health/liveness")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.status").isEqualTo("UP");
+
+        client.get().uri("/actuator/health/readiness")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.status").isEqualTo("UP")
+                .jsonPath("$.components.db.status").isEqualTo("UP");
+    }
 }

@@ -1,0 +1,13 @@
+# One node keeps the cluster small enough for a laptop. NodePorts are mapped to the same host ports Compose uses.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: payledger
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+      - containerPort: 30081
+        hostPort: 8081
+      - containerPort: 30180
+        hostPort: 8180
