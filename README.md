@@ -62,9 +62,9 @@ sequenceDiagram
   participant N as notification-service
   C->>P: POST /api/v1/transfers (JWT, Idempotency-Key)
   P->>DB: claim the idempotency key
-  P->>DB: BEGIN; lock both accounts in id order
+  P->>DB: BEGIN, then lock both accounts in id order
   P->>DB: insert DEBIT + CREDIT entries, update balances
-  P->>DB: insert outbox event; COMMIT
+  P->>DB: insert outbox event, then COMMIT
   P-->>C: 201 Created (response stored for retries)
   loop every 500 ms
     P->>DB: claim unpublished events (SKIP LOCKED)
