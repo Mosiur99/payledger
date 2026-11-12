@@ -19,6 +19,7 @@ import dev.mosiur.payledger.notification.notification.model.TransactionPostedEve
 import dev.mosiur.payledger.notification.notification.repository.NotificationRepository;
 import dev.mosiur.payledger.notification.notification.repository.ProcessedEventRepository;
 import dev.mosiur.payledger.notification.notification.service.NotificationService;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -68,6 +69,9 @@ class TransactionEventsIT {
     @MockitoSpyBean
     private NotificationService notificationService;
 
+    @Autowired
+    private MeterRegistry registry;
+
     private KafkaConsumer<String, String> deadLetters;
     private final List<ConsumerRecord<String, String>> deadLettersSeen = new ArrayList<>();
 
@@ -101,6 +105,7 @@ class TransactionEventsIT {
 
     @Test
     void aRedeliveredEventIsProcessedOnce() {
+        double duplicates = registry.get("payledger.events.duplicates").counter().count();
         UUID eventId = UUID.randomUUID();
         TransactionPostedEvent transfer = transfer("ayesha", "rahim");
         String key = transfer.transactionId().toString();
@@ -115,10 +120,12 @@ class TransactionEventsIT {
         assertThat(notificationsFor(transfer)).hasSize(2);
         verify(notificationService, times(2)).handle(eq(eventId), any());
         assertNoDeadLetter(key);
+        assertThat(registry.get("payledger.events.duplicates").counter().count()).isEqualTo(duplicates + 1);
     }
 
     @Test
     void aPoisonMessageGoesToTheDeadLetterTopicWithoutBlockingThePartition() {
+        double deadLettered = deadLetteredCount();
         String key = "poison-" + UUID.randomUUID();
         send(key, UUID.randomUUID(), "{not json");
         TransactionPostedEvent next = transfer("ayesha", "rahim");
@@ -129,6 +136,7 @@ class TransactionEventsIT {
         assertThat(dead.value()).isEqualTo("{not json");
         assertThat(header(dead, "kafka_dlt-original-topic")).isEqualTo(TransactionPostedEvent.TOPIC);
         assertThat(header(dead, "kafka_dlt-exception-message")).contains("Payload is not a valid TransactionPosted event");
+        assertThat(deadLetteredCount()).isGreaterThanOrEqualTo(deadLettered + 1);
     }
 
     @Test
@@ -180,6 +188,10 @@ class TransactionEventsIT {
             return deadLettersSeen.stream().anyMatch(record -> key.equals(record.key()));
         });
         return deadLettersSeen.stream().filter(record -> key.equals(record.key())).findFirst().orElseThrow();
+    }
+
+    private double deadLetteredCount() {
+        return registry.get("payledger.events.dead.lettered").counter().count();
     }
 
     private void assertNoDeadLetter(String key) {

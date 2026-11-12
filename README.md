@@ -103,6 +103,41 @@ Set `OUTBOX_RELAY_ENABLED=false` to run the service without Kafka.
 | Failures that outlast the retries | Sent to `payledger.transactions.DLT` with the original topic, partition, offset and exception in headers, then the consumer moves on, so one bad message never blocks its partition |
 | Unknown event types | Skipped, so a newer producer does not break this consumer |
 
+## Observability
+
+Both services expose Prometheus metrics at `/actuator/prometheus` and send traces over OTLP. Start the optional stack (Jaeger, Prometheus, Grafana) with:
+
+```sh
+docker compose -f deploy/compose/docker-compose.yml --profile observability up -d
+```
+
+| Tool | URL | What you see |
+| --- | --- | --- |
+| Grafana | http://localhost:3000 | The **PayLedger Overview** dashboard opens as the home page (anonymous view; `admin` / `admin` to edit) |
+| Prometheus | http://localhost:9090 | Raw metrics and queries |
+| Jaeger | http://localhost:16686 | Traces across both services |
+
+### Metrics
+
+| Metric | Service | Meaning |
+| --- | --- | --- |
+| `payledger_ledger_transactions_total{type,currency}` | payments | Committed deposits and transfers. Counted after commit, so rolled-back work never shows up |
+| `payledger_ledger_volume_minor_total{type,currency}` | payments | Money moved, in minor units |
+| `payledger_outbox_pending` | payments | Events committed but not yet on Kafka |
+| `payledger_outbox_oldest_pending_age_seconds` | payments | Age of the oldest unsent event. The single best alert: it grows when the relay or Kafka is stuck |
+| `payledger_outbox_published_total`, `payledger_outbox_publish_failures_total` | payments | Relay sends acknowledged and failed |
+| `http_server_requests_seconds_bucket` | payments | Request latency histogram, for p95 per endpoint |
+| `payledger_notifications_stored_total{kind}` | notification | Notifications stored |
+| `payledger_events_duplicates_total` | notification | Redelivered events ignored by deduplication |
+| `payledger_events_dead_lettered_total` | notification | Records moved to the dead letter topic |
+| `kafka_consumer_fetch_manager_records_lag_max` | notification | Consumer lag, from the Kafka client |
+
+`/actuator/prometheus` is open so Prometheus can scrape it. In production it would be reachable only from inside the cluster network.
+
+### Tracing through the outbox
+
+A transfer is one trace: the HTTP request, the database work, the Kafka send by the relay, and the notification consumer. Because the relay sends events later on another thread, the request's W3C `traceparent` is saved in the outbox row (`trace_parent`). The relay resumes that trace before sending, so Kafka's `traceparent` header, and the consumer's spans, belong to the original request. Log lines carry the same trace id. In Spring Boot 4, trace propagation is only active when trace export is enabled, so `management.tracing.export.enabled=false` also stops the header.
+
 ## Errors
 
 Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details response (`application/problem+json`) with a stable `type`:
@@ -146,4 +181,4 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 ./mvnw verify
 ```
 
-Integration tests start PostgreSQL in Docker with Testcontainers. API tests sign tokens with a key created for the test run; `KeycloakSecurityIT` starts the real Keycloak realm and checks the 401, 403 and 404 cases end to end. `OutboxKafkaIT` starts Kafka and checks that each committed transaction is published exactly once and a rolled-back one never is; `OutboxRelayIT` runs four relays at once over the same rows. `TransactionEventsIT` (notification-service) checks that a redelivered event is handled once, a poison message lands in the dead letter topic without blocking the next one, a temporary failure succeeds on retry, and a lasting failure is parked after three retries.
+Integration tests start PostgreSQL in Docker with Testcontainers. API tests sign tokens with a key created for the test run; `KeycloakSecurityIT` starts the real Keycloak realm and checks the 401, 403 and 404 cases end to end. `OutboxKafkaIT` starts Kafka and checks that each committed transaction is published exactly once and a rolled-back one never is; `OutboxRelayIT` runs four relays at once over the same rows. `ObservabilityIT` checks that committed transfers move the counters, rejected or rolled-back ones do not, and Prometheus can scrape the endpoint; `OutboxKafkaIT` also checks that the request's trace id arrives in the Kafka `traceparent` header. `TransactionEventsIT` (notification-service) checks that a redelivered event is handled once, a poison message lands in the dead letter topic without blocking the next one, a temporary failure succeeds on retry, and a lasting failure is parked after three retries.

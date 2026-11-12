@@ -24,6 +24,7 @@ import dev.mosiur.payledger.payments.ledger.repository.LedgerEntryRepository;
 import dev.mosiur.payledger.payments.ledger.repository.LedgerTransactionRepository;
 import dev.mosiur.payledger.payments.ledger.service.CurrencyMismatchException;
 import dev.mosiur.payledger.payments.outbox.service.OutboxService;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -52,11 +53,13 @@ class LedgerPostingServiceImplTest {
     private OutboxService outboxService;
 
     private LedgerPostingServiceImpl service;
+    private SimpleMeterRegistry registry;
 
     @BeforeEach
     void setUp() {
-        service = new LedgerPostingServiceImpl(
-                transactionRepository, entryRepository, outboxService, Clock.fixed(NOW, ZoneOffset.UTC));
+        registry = new SimpleMeterRegistry();
+        service = new LedgerPostingServiceImpl(transactionRepository, entryRepository, outboxService,
+                new LedgerMetrics(registry), Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
     @Test
@@ -99,6 +102,17 @@ class LedgerPostingServiceImplTest {
     }
 
     @Test
+    void countsThePostedTransactionAndItsAmount() {
+        when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> withId(call.getArgument(0)));
+
+        service.post(posting(systemAccount(Currency.BDT), account(Currency.BDT), 50_000));
+
+        assertThat(registry.get("payledger.ledger.transactions").tag("type", "DEPOSIT").tag("currency", "BDT")
+                .counter().count()).isEqualTo(1);
+        assertThat(registry.get("payledger.ledger.volume").tag("currency", "BDT").counter().count()).isEqualTo(50_000);
+    }
+
+    @Test
     void movesBothBalances() {
         when(transactionRepository.save(any(LedgerTransaction.class))).thenAnswer(call -> withId(call.getArgument(0)));
         Account system = systemAccount(Currency.BDT);
@@ -119,6 +133,7 @@ class LedgerPostingServiceImplTest {
                 .isInstanceOf(CurrencyMismatchException.class);
         assertThat(bdt.getBalanceMinor()).isZero();
         verifyNoInteractions(transactionRepository, entryRepository, outboxService);
+        assertThat(registry.find("payledger.ledger.transactions").counter()).isNull();
     }
 
     @Test

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import dev.mosiur.payledger.payments.outbox.domain.OutboxEvent;
 import dev.mosiur.payledger.payments.outbox.repository.OutboxEventRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -29,10 +30,12 @@ class OutboxRelayTest {
     private EventPublisher publisher;
 
     private OutboxRelay relay;
+    private SimpleMeterRegistry registry;
 
     @BeforeEach
     void setUp() {
-        relay = new OutboxRelay(repository, publisher, Clock.fixed(NOW, ZoneOffset.UTC));
+        registry = new SimpleMeterRegistry();
+        relay = new OutboxRelay(repository, publisher, Clock.fixed(NOW, ZoneOffset.UTC), registry);
     }
 
     @Test
@@ -62,6 +65,8 @@ class OutboxRelayTest {
         assertThat(rejected.isPublished()).isFalse();
         assertThat(thrown.isPublished()).isFalse();
         assertThat(sent.isPublished()).isTrue();
+        assertThat(registry.get("payledger.outbox.published").counter().count()).isEqualTo(1);
+        assertThat(registry.get("payledger.outbox.publish.failures").counter().count()).isEqualTo(2);
     }
 
     @Test
@@ -72,6 +77,6 @@ class OutboxRelayTest {
     }
 
     private static OutboxEvent event(String key) {
-        return OutboxEvent.pending("payledger.transactions", key, "TransactionPosted", "{}", NOW);
+        return OutboxEvent.pending("payledger.transactions", key, "TransactionPosted", "{}", null, NOW);
     }
 }

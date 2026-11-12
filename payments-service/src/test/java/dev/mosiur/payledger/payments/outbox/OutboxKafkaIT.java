@@ -15,6 +15,8 @@ import dev.mosiur.payledger.payments.support.KafkaTestConfiguration;
 import dev.mosiur.payledger.payments.transfer.model.TransferRequest;
 import dev.mosiur.payledger.payments.transfer.model.TransferResponse;
 import dev.mosiur.payledger.payments.transfer.service.TransferService;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -30,6 +32,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.micrometer.tracing.test.autoconfigure.AutoConfigureTracing;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
@@ -39,6 +42,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest
+@AutoConfigureTracing
 @Import({PostgresTestConfiguration.class, KafkaTestConfiguration.class})
 @TestPropertySource(properties = {
         "payledger.outbox.relay.enabled=true",
@@ -67,6 +71,9 @@ class OutboxKafkaIT {
 
     @Autowired
     private JsonMapper jsonMapper;
+
+    @Autowired
+    private Tracer tracer;
 
     private KafkaConsumer<String, String> consumer;
     private final List<ConsumerRecord<String, String>> received = new ArrayList<>();
@@ -116,6 +123,29 @@ class OutboxKafkaIT {
         assertThat(outboxRepository.findByMessageKey(transferId.toString()))
                 .singleElement()
                 .satisfies(event -> assertThat(event.isPublished()).isTrue());
+    }
+
+    @Test
+    void theTraceOfTheRequestContinuesIntoKafka() {
+        String ayesha = "ayesha-" + UUID.randomUUID();
+        UUID from = accountService.open(ayesha, new OpenAccountRequest(Currency.BDT)).id();
+        UUID to = accountService.open("rahim-" + UUID.randomUUID(), new OpenAccountRequest(Currency.BDT)).id();
+        depositService.deposit("admin", new DepositRequest(from, 10_000, null));
+
+        Span request = tracer.nextSpan().name("POST /api/v1/transfers").start();
+        UUID transferId;
+        try (Tracer.SpanInScope ignored = tracer.withSpan(request)) {
+            transferId = transferService.transfer(ayesha, new TransferRequest(from, to, 1_000, null)).id();
+        } finally {
+            request.end();
+        }
+
+        ConsumerRecord<String, String> record = recordsFor(transferId.toString()).getFirst();
+        String traceParent = header(record, "traceparent");
+        assertThat(traceParent).isNotNull();
+        assertThat(traceParent.split("-")[1]).isEqualTo(request.context().traceId());
+        assertThat(outboxRepository.findByMessageKey(transferId.toString()).getFirst().getTraceParent())
+                .contains(request.context().traceId());
     }
 
     @Test

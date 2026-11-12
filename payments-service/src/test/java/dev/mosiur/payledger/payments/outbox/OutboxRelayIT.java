@@ -124,7 +124,7 @@ class OutboxRelayIT {
     private Set<UUID> createEvents(int count) {
         return transactionTemplate.execute(status -> IntStream.range(0, count)
                 .mapToObj(i -> repository.save(OutboxEvent.pending(
-                        "payledger.transactions", "key-" + i, "TransactionPosted", "{\"n\":" + i + "}", Instant.now())))
+                        "payledger.transactions", "key-" + i, "TransactionPosted", "{\"n\":" + i + "}", null, Instant.now())))
                 .map(OutboxEvent::getId)
                 .collect(Collectors.toSet()));
     }

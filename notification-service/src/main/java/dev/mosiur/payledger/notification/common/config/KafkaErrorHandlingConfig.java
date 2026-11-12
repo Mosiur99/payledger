@@ -2,6 +2,8 @@ package dev.mosiur.payledger.notification.common.config;
 
 import dev.mosiur.payledger.notification.notification.consumer.InvalidEventException;
 import dev.mosiur.payledger.notification.notification.model.TransactionPostedEvent;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
@@ -28,13 +30,17 @@ public class KafkaErrorHandlingConfig {
      * and moves on, so one bad message never blocks its partition. Invalid messages skip the retries.
      */
     @Bean
-    DefaultErrorHandler kafkaErrorHandler(KafkaOperations<?, ?> kafkaTemplate) {
+    DefaultErrorHandler kafkaErrorHandler(KafkaOperations<?, ?> kafkaTemplate, MeterRegistry registry) {
+        Counter deadLettered = Counter.builder("payledger.events.dead.lettered")
+                .description("Records moved to the dead letter topic")
+                .register(registry);
         DeadLetterPublishingRecoverer deadLetters = new DeadLetterPublishingRecoverer(kafkaTemplate,
                 (record, exception) -> new TopicPartition(DEAD_LETTER_TOPIC, record.partition()));
         ConsumerRecordRecoverer recoverer = (record, exception) -> {
             log.warn("Moving {}-{}@{} (key {}) to {}", record.topic(), record.partition(), record.offset(),
                     record.key(), DEAD_LETTER_TOPIC, exception);
             deadLetters.accept(record, exception);
+            deadLettered.increment();
         };
         ExponentialBackOffWithMaxRetries backOff = new ExponentialBackOffWithMaxRetries(MAX_RETRIES);
         backOff.setInitialInterval(500);

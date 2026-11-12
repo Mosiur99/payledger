@@ -39,19 +39,25 @@ public class OutboxEvent {
     @Column(name = "published_at")
     private Instant publishedAt;
 
+    @Column(name = "trace_parent", updatable = false, length = 64)
+    private String traceParent;
+
     protected OutboxEvent() {
     }
 
-    private OutboxEvent(String topic, String messageKey, String eventType, String payload, Instant createdAt) {
+    private OutboxEvent(String topic, String messageKey, String eventType, String payload, String traceParent,
+            Instant createdAt) {
         this.topic = topic;
         this.messageKey = messageKey;
         this.eventType = eventType;
         this.payload = payload;
+        this.traceParent = traceParent;
         this.createdAt = createdAt;
     }
 
-    public static OutboxEvent pending(String topic, String messageKey, String eventType, String payload, Instant now) {
-        return new OutboxEvent(topic, messageKey, eventType, payload, now);
+    public static OutboxEvent pending(String topic, String messageKey, String eventType, String payload,
+            String traceParent, Instant now) {
+        return new OutboxEvent(topic, messageKey, eventType, payload, traceParent, now);
     }
 
     public void markPublished(Instant now) {
@@ -84,6 +90,10 @@ public class OutboxEvent {
 
     public Instant getPublishedAt() {
         return publishedAt;
+    }
+
+    public String getTraceParent() {
+        return traceParent;
     }
 
     public boolean isPublished() {

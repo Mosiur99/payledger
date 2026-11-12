@@ -22,13 +22,15 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
     private final LedgerTransactionRepository transactionRepository;
     private final LedgerEntryRepository entryRepository;
     private final OutboxService outboxService;
+    private final LedgerMetrics metrics;
     private final Clock clock;
 
     public LedgerPostingServiceImpl(LedgerTransactionRepository transactionRepository,
-            LedgerEntryRepository entryRepository, OutboxService outboxService, Clock clock) {
+            LedgerEntryRepository entryRepository, OutboxService outboxService, LedgerMetrics metrics, Clock clock) {
         this.transactionRepository = transactionRepository;
         this.entryRepository = entryRepository;
         this.outboxService = outboxService;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -55,6 +57,7 @@ public class LedgerPostingServiceImpl implements LedgerPostingService {
         outboxService.record(TransactionPostedEvent.TOPIC, transaction.getId().toString(),
                 TransactionPostedEvent.EVENT_TYPE,
                 TransactionPostedEvent.of(transaction, debit, credit, posting.amountMinor()));
+        metrics.recordPosted(posting.type(), debit.getCurrency(), posting.amountMinor());
         return transaction;
     }
 }

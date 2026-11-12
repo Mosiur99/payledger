@@ -2,6 +2,11 @@ package dev.mosiur.payledger.payments.outbox.relay;
 
 import dev.mosiur.payledger.payments.outbox.domain.OutboxEvent;
 import dev.mosiur.payledger.payments.outbox.repository.OutboxEventRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.Clock;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -27,11 +32,26 @@ public class OutboxRelay {
     private final OutboxEventRepository repository;
     private final EventPublisher publisher;
     private final Clock clock;
+    private final Counter publishedCounter;
+    private final Counter failedCounter;
 
-    public OutboxRelay(OutboxEventRepository repository, EventPublisher publisher, Clock clock) {
+    public OutboxRelay(OutboxEventRepository repository, EventPublisher publisher, Clock clock, MeterRegistry registry) {
         this.repository = repository;
         this.publisher = publisher;
         this.clock = clock;
+        this.publishedCounter = Counter.builder("payledger.outbox.published")
+                .description("Outbox events acknowledged by Kafka")
+                .register(registry);
+        this.failedCounter = Counter.builder("payledger.outbox.publish.failures")
+                .description("Outbox sends that failed and will be retried")
+                .register(registry);
+        Gauge.builder("payledger.outbox.pending", repository, OutboxEventRepository::countByPublishedAtIsNull)
+                .description("Outbox events waiting to be published")
+                .register(registry);
+        Gauge.builder("payledger.outbox.oldest.pending.age", this, OutboxRelay::oldestPendingAgeSeconds)
+                .description("Age of the oldest unpublished event; grows when the relay or Kafka is stuck")
+                .baseUnit("seconds")
+                .register(registry);
     }
 
     /** Returns how many events were published; failed ones stay unpublished and are retried next run. */
@@ -47,7 +67,9 @@ public class OutboxRelay {
                 sends.get(i).get(SEND_TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 event.markPublished(clock.instant());
                 published++;
+                publishedCounter.increment();
             } catch (ExecutionException | TimeoutException e) {
+                failedCounter.increment();
                 log.warn("Outbox event {} was not published and will be retried", event.getId(), e);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -55,6 +77,11 @@ public class OutboxRelay {
             }
         }
         return published;
+    }
+
+    private double oldestPendingAgeSeconds() {
+        Instant oldest = repository.oldestPendingCreatedAt();
+        return oldest == null ? 0 : Duration.between(oldest, clock.instant()).toMillis() / 1000.0;
     }
 
     private CompletableFuture<?> send(OutboxEvent event) {
