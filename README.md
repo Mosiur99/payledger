@@ -9,7 +9,7 @@ A double-entry ledger and payments platform built with Java and Spring Boot: acc
 | Module | Port | Purpose |
 | --- | --- | --- |
 | `payments-service` | 8080 | Accounts, ledger, transfers |
-| `notification-service` | 8081 | Reacts to payment events |
+| `notification-service` | 8081 | Consumes payment events and stores notifications for the people involved |
 
 ## Run locally
 
@@ -91,6 +91,18 @@ Writing to the database and sending to Kafka directly could leave them out of sy
 
 Set `OUTBOX_RELAY_ENABLED=false` to run the service without Kafka.
 
+## Notifications: idempotent consumer and dead letters
+
+`notification-service` consumes `payledger.transactions` in the consumer group `notification-service` and stores a message for each person involved: the sender and receiver of a transfer, or the customer who got a deposit. It has its own database (`notifications`) and its own copy of the event contract, so the two services share only the JSON shape.
+
+| Concern | How |
+| --- | --- |
+| Duplicates (the outbox delivers at least once) | The `eventId` header is inserted into `processed_events` with `ON CONFLICT DO NOTHING` in the same transaction as the notifications. A second delivery finds the row and does nothing. |
+| Temporary failures (database busy) | Retried in place with backoff: 0.5 s, 1 s, 2 s |
+| Permanent failures (bad JSON, missing fields or header) | Not retried. Sent straight to the dead letter topic |
+| Failures that outlast the retries | Sent to `payledger.transactions.DLT` with the original topic, partition, offset and exception in headers, then the consumer moves on, so one bad message never blocks its partition |
+| Unknown event types | Skipped, so a newer producer does not break this consumer |
+
 ## Errors
 
 Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Details response (`application/problem+json`) with a stable `type`:
@@ -134,4 +146,4 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 ./mvnw verify
 ```
 
-Integration tests start PostgreSQL in Docker with Testcontainers. API tests sign tokens with a key created for the test run; `KeycloakSecurityIT` starts the real Keycloak realm and checks the 401, 403 and 404 cases end to end. `OutboxKafkaIT` starts Kafka and checks that each committed transaction is published exactly once and a rolled-back one never is; `OutboxRelayIT` runs four relays at once over the same rows.
+Integration tests start PostgreSQL in Docker with Testcontainers. API tests sign tokens with a key created for the test run; `KeycloakSecurityIT` starts the real Keycloak realm and checks the 401, 403 and 404 cases end to end. `OutboxKafkaIT` starts Kafka and checks that each committed transaction is published exactly once and a rolled-back one never is; `OutboxRelayIT` runs four relays at once over the same rows. `TransactionEventsIT` (notification-service) checks that a redelivered event is handled once, a poison message lands in the dead letter topic without blocking the next one, a temporary failure succeeds on retry, and a lasting failure is parked after three retries.

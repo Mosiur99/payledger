@@ -8,7 +8,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.web.servlet.client.RestTestClient;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Import(PostgresTestConfiguration.class)
+@Import({PostgresTestConfiguration.class, KafkaTestConfiguration.class})
 class NotificationApplicationIT {
 
     @LocalServerPort
