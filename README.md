@@ -2,18 +2,87 @@
 
 [![CI](https://github.com/Mosiur99/payledger/actions/workflows/ci.yml/badge.svg)](https://github.com/Mosiur99/payledger/actions/workflows/ci.yml)
 
-A double-entry ledger and payments platform built with Java and Spring Boot: accounts, deposits and transfers with idempotency keys, a transactional outbox to Kafka, and a separate notification service.
+A double-entry ledger and payments backend in Java 25 and Spring Boot 4. Customers open accounts, an operator deposits money, and customers transfer money to each other. Every movement is published to Kafka through a transactional outbox, and a second service turns the events into notifications.
 
-> Work in progress. The design and build plan are being implemented in small, tested parts.
+It is built to show how payment systems stay correct when requests are retried, run concurrently, or crash halfway:
+
+- **No money created or lost.** Double-entry bookkeeping with append-only entries. Accounts are locked in id order, and a 200-transfer concurrency test proves there are no deadlocks and no lost updates.
+- **Safe retries.** `Idempotency-Key` on every money-moving request; a retried request replays the first response instead of charging twice.
+- **Events that match the database.** A transactional outbox with `FOR UPDATE SKIP LOCKED` relays, at-least-once delivery, and an idempotent consumer with retries and a dead letter topic.
+- **Secure by default.** Keycloak OAuth2 tokens, roles, ownership checks, and RFC 9457 error responses.
+- **Operable.** Prometheus metrics, a Grafana dashboard, and one trace from the HTTP request through Kafka to the consumer.
+- **Shippable.** Layered non-root images, GitHub Actions with Testcontainers, images on GHCR, and a Helm chart running on kind.
+
+The reasoning and trade-offs behind each choice are in **[docs/design.md](docs/design.md)**.
+
+## Quick start (5 minutes, Docker only)
+
+Requirements: Docker with Compose, `curl` and `jq`.
+
+```sh
+git clone https://github.com/Mosiur99/payledger.git && cd payledger
+docker compose -f deploy/compose/docker-compose.yml --profile apps up -d --build --wait
+scripts/demo.sh
+```
+
+The first build downloads dependencies and takes a few minutes. The demo then:
+
+1. Logs in three demo users.
+2. Opens accounts and deposits money.
+3. Makes a transfer, and retries it with the same key.
+4. Shows the insufficient-funds and not-your-account errors.
+5. Prints the double-entry statement and the notifications that arrived through Kafka.
+
+To stop everything, run `docker compose -f deploy/compose/docker-compose.yml --profile apps down -v`.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  client[Client] -- "JWT" --> pay[payments-service :8080]
+  keycloak[(Keycloak :8180)] -. "tokens" .-> client
+  pay -- "signing keys" --> keycloak
+  pay --> paydb[(PostgreSQL: payments)]
+  pay -- "outbox relay" --> kafka{{Kafka: payledger.transactions}}
+  kafka --> notif[notification-service :8081]
+  notif --> notifdb[(PostgreSQL: notifications)]
+  notif -. "failed records" .-> dlt{{payledger.transactions.DLT}}
+  pay & notif -. "metrics, traces" .-> obs[Prometheus, Grafana, Jaeger]
+```
+
+What happens during a transfer:
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant P as payments-service
+  participant DB as PostgreSQL (payments)
+  participant K as Kafka
+  participant N as notification-service
+  C->>P: POST /api/v1/transfers (JWT, Idempotency-Key)
+  P->>DB: claim the idempotency key
+  P->>DB: BEGIN; lock both accounts in id order
+  P->>DB: insert DEBIT + CREDIT entries, update balances
+  P->>DB: insert outbox event; COMMIT
+  P-->>C: 201 Created (response stored for retries)
+  loop every 500 ms
+    P->>DB: claim unpublished events (SKIP LOCKED)
+    P->>K: send, wait for acks=all, then stamp published_at
+  end
+  K->>N: TransactionPosted
+  N->>N: skip if the event id was already processed
+  N->>N: store notifications for the sender and receiver
+```
 
 ## Modules
 
 | Module | Port | Purpose |
 | --- | --- | --- |
-| `payments-service` | 8080 | Accounts, ledger, transfers |
+| `payments-service` | 8080 | Accounts, ledger, transfers, outbox |
 | `notification-service` | 8081 | Consumes payment events and stores notifications for the people involved |
 
-## Run locally
+## Develop
 
 Requirements: Java 25 and Docker. Maven is not needed; the wrapper downloads it.
 
@@ -25,13 +94,7 @@ docker compose -f deploy/compose/docker-compose.yml up -d
 
 Compose starts PostgreSQL, Kafka (localhost:9092) and Keycloak (http://localhost:8180, admin console login `admin` / `admin`). Check health at http://localhost:8080/actuator/health and http://localhost:8081/actuator/health.
 
-### Run everything in Docker
-
-```sh
-docker compose -f deploy/compose/docker-compose.yml --profile apps up -d --build
-```
-
-This builds both services from the root `Dockerfile` and runs them next to the infrastructure on the same ports, so the curl examples, Postman collection and Prometheus scraping work unchanged. Add `--profile observability` to send traces to Jaeger as well.
+With the `apps` profile, as in the quick start, both services run as containers on the same ports instead, so the curl examples, the Postman collection and Prometheus scraping work unchanged. Add `--profile observability` to send traces to Jaeger as well.
 
 Inside Compose the services reach Kafka at `kafka:19092`; Kafka also advertises `localhost:9092` for services started with Maven. Keycloak signs tokens with the issuer `http://localhost:8180/...` that clients see, so payments-service keeps that as the expected issuer and fetches the signing keys from `http://keycloak:8180` over the Compose network.
 
@@ -225,6 +288,7 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 ## API docs and demo
 
 - Swagger UI: http://localhost:8080/swagger-ui.html (OpenAPI JSON at `/v3/api-docs`)
+- Demo script: `scripts/demo.sh` (see the quick start)
 - Postman: import `docs/postman/PayLedger.postman_collection.json` and run it top to bottom. It logs in the three demo users, opens two accounts, deposits, transfers, shows an insufficient-funds error and reads the statement.
 
 ## Test
