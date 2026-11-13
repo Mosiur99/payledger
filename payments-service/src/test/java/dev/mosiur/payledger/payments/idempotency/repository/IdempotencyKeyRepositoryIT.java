@@ -55,4 +55,19 @@ class IdempotencyKeyRepositoryIT {
         assertThat(repository.find("ayesha", "running")).isEmpty();
         assertThat(repository.find("ayesha", "done")).isPresent();
     }
+
+    @Test
+    void reclaimsOnlyAnUnfinishedKeyOlderThanTheCutoff() {
+        Instant cutoff = NOW.minusSeconds(60);
+        repository.insertIfAbsent("ayesha", "dead", HASH, NOW.minusSeconds(120));
+        repository.insertIfAbsent("ayesha", "alive", HASH, NOW.minusSeconds(10));
+        repository.insertIfAbsent("ayesha", "finished", HASH, NOW.minusSeconds(120));
+        repository.complete("ayesha", "finished", new StoredResponse(201, "application/json", "{}"), NOW);
+
+        assertThat(repository.reclaimAbandoned("ayesha", "dead", cutoff, NOW)).isTrue();
+        assertThat(repository.reclaimAbandoned("ayesha", "dead", cutoff, NOW)).isFalse();
+        assertThat(repository.reclaimAbandoned("ayesha", "alive", cutoff, NOW)).isFalse();
+        assertThat(repository.reclaimAbandoned("ayesha", "finished", cutoff, NOW)).isFalse();
+        assertThat(repository.find("ayesha", "dead").orElseThrow().createdAt()).isEqualTo(NOW);
+    }
 }

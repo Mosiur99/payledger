@@ -67,6 +67,21 @@ public class IdempotencyKeyRepository {
                 .update();
     }
 
+    /** Gives an unfinished key whose request died to a new attempt. Of several attempts, only one can win it. */
+    public boolean reclaimAbandoned(String ownerId, String key, Instant abandonedBefore, Instant now) {
+        return jdbc.sql("""
+                UPDATE idempotency_keys
+                SET created_at = :now
+                WHERE owner_id = :owner AND idempotency_key = :key
+                  AND response_status IS NULL AND created_at < :abandonedBefore
+                """)
+                .param("now", Timestamp.from(now))
+                .param("owner", ownerId)
+                .param("key", key)
+                .param("abandonedBefore", Timestamp.from(abandonedBefore))
+                .update() == 1;
+    }
+
     public void deleteUnfinished(String ownerId, String key) {
         jdbc.sql("""
                 DELETE FROM idempotency_keys

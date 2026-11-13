@@ -6,6 +6,7 @@ import dev.mosiur.payledger.payments.idempotency.domain.StoredResponse;
 import dev.mosiur.payledger.payments.idempotency.repository.IdempotencyKeyRepository;
 import dev.mosiur.payledger.payments.idempotency.service.IdempotencyService;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,7 +25,8 @@ public class IdempotencyServiceImpl implements IdempotencyService {
     @Override
     @Transactional
     public IdempotencyDecision begin(String ownerId, String key, String requestHash) {
-        if (repository.insertIfAbsent(ownerId, key, requestHash, clock.instant())) {
+        Instant now = clock.instant();
+        if (repository.insertIfAbsent(ownerId, key, requestHash, now)) {
             return new IdempotencyDecision.Proceed();
         }
         Optional<IdempotencyRecord> existing = repository.find(ownerId, key);
@@ -37,7 +39,8 @@ public class IdempotencyServiceImpl implements IdempotencyService {
             return new IdempotencyDecision.KeyReused();
         }
         if (!record.isCompleted()) {
-            return new IdempotencyDecision.InProgress();
+            boolean abandoned = repository.reclaimAbandoned(ownerId, key, now.minus(ABANDONED_AFTER), now);
+            return abandoned ? new IdempotencyDecision.Proceed() : new IdempotencyDecision.InProgress();
         }
         return new IdempotencyDecision.Replay(new StoredResponse(
                 record.responseStatus(), record.responseContentType(), record.responseBody()));

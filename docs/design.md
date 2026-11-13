@@ -67,8 +67,10 @@ A transfer locks both accounts with `SELECT … FOR UPDATE`, always the smaller 
 
 `parallelDuplicatesProduceExactlyOneTransfer` sends the same request 10 times at once and checks that exactly one transfer happens.
 
+Claiming the key and moving the money happen in different transactions, which leaves one dangerous gap: a crash after the money commits but before the response is stored would leave the key unfinished forever, so every retry gets `409` and never learns that the payment went through. To close it, the filter opens a transaction that the services join, and it stores a successful response in that same transaction just before committing. The money moves if and only if its response is stored. An unfinished key can therefore only belong to a request that is still running or that died without moving money. The request's transaction times out after 30 seconds, so a key unfinished for over a minute is taken over by the next retry. `IdempotencyRecoveryIT` makes storing the response fail and checks that the transfer rolls back and that the retry runs exactly once.
+
 - **Why the database and not Redis:** the key and the money movement are in the same PostgreSQL instance, so there is no second system that could disagree with it.
-- **Cost:** one extra write per request, plus a cleanup job for old keys (not built yet).
+- **Cost:** one extra write per request, account locks held while the response is serialized (microseconds), and a cleanup job for old keys (not built yet).
 
 ### 5. Transactional outbox, not dual writes
 
@@ -119,6 +121,9 @@ payments-service validates Keycloak JWTs: signature, issuer, expiry and the `pay
 | notification-service is down | Events wait in Kafka; consumer lag grows; nothing is lost |
 | A malformed event | It goes to the DLT and the next message is processed |
 | The client times out and retries | The same `Idempotency-Key` replays the first response |
+| payments-service crashes right after a transfer commits | The response was stored in the same transaction, so a retry replays it |
+| payments-service crashes before committing | Nothing moved; after a minute the retry takes the unfinished key over and runs |
+| A filter fails outside Spring MVC | The container's `/error` page still answers with Problem Details |
 | The database is down | Readiness fails and Kubernetes stops sending traffic; the pods recover without restarting |
 
 ## Known limits and next steps

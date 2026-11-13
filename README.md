@@ -190,6 +190,8 @@ Every movement is a transaction with exactly two ledger entries: a debit on one 
 | Same key, different request | `422` |
 | Server error (`5xx`) | The key is released so the client can retry |
 
+A successful request runs in one database transaction with its stored response: the services join a transaction that the filter opens, and the response is saved just before it commits. So money moves if and only if its response is stored, and a crash can never leave a finished payment behind an unfinished key. A rejected (`4xx`) request is rolled back and its answer stored on its own. If a key stays unfinished for over a minute, its request died without moving money (the request's transaction times out after 30 seconds), so the next retry takes the key over and runs.
+
 ## Events: transactional outbox
 
 Every committed ledger transaction (deposit or transfer) is published to the Kafka topic `payledger.transactions` as a `TransactionPosted` event, keyed by transaction id.

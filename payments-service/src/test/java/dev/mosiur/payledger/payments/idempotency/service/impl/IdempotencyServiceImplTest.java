@@ -3,12 +3,15 @@ package dev.mosiur.payledger.payments.idempotency.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import dev.mosiur.payledger.payments.idempotency.domain.IdempotencyDecision;
 import dev.mosiur.payledger.payments.idempotency.domain.IdempotencyRecord;
 import dev.mosiur.payledger.payments.idempotency.domain.StoredResponse;
 import dev.mosiur.payledger.payments.idempotency.repository.IdempotencyKeyRepository;
+import dev.mosiur.payledger.payments.idempotency.service.IdempotencyService;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -55,6 +58,23 @@ class IdempotencyServiceImplTest {
         givenExisting(new IdempotencyRecord("ayesha", "k", HASH, null, null, null, NOW));
 
         assertThat(service.begin("ayesha", "k", HASH)).isInstanceOf(IdempotencyDecision.InProgress.class);
+    }
+
+    @Test
+    void takesOverAKeyWhoseRequestDied() {
+        givenExisting(new IdempotencyRecord("ayesha", "k", HASH, null, null, null, NOW.minusSeconds(300)));
+        when(repository.reclaimAbandoned("ayesha", "k", NOW.minus(IdempotencyService.ABANDONED_AFTER), NOW))
+                .thenReturn(true);
+
+        assertThat(service.begin("ayesha", "k", HASH)).isInstanceOf(IdempotencyDecision.Proceed.class);
+    }
+
+    @Test
+    void neverTakesOverAKeyForADifferentRequest() {
+        givenExisting(new IdempotencyRecord("ayesha", "k", "b".repeat(64), null, null, null, NOW.minusSeconds(300)));
+
+        assertThat(service.begin("ayesha", "k", HASH)).isInstanceOf(IdempotencyDecision.KeyReused.class);
+        verify(repository, never()).reclaimAbandoned(any(), any(), any(), any());
     }
 
     @Test

@@ -19,6 +19,10 @@ import org.springframework.http.HttpMethod;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 
@@ -26,6 +30,10 @@ import org.springframework.web.util.ContentCachingResponseWrapper;
  * Makes money-moving POST requests safe to retry: the first request with a key runs,
  * repeats of the same request get the stored response, and anything else is refused.
  * Runs after Spring Security, so the caller is already authenticated and keys are scoped per caller.
+ * <p>
+ * The request runs in one transaction that the services join, and a successful response is stored in that
+ * same transaction. So the money moves if and only if its response is stored: a crash can never leave a
+ * finished payment behind an unfinished key.
  */
 @Component
 public class IdempotencyFilter extends OncePerRequestFilter {
@@ -35,13 +43,17 @@ public class IdempotencyFilter extends OncePerRequestFilter {
 
     private static final Set<String> PROTECTED_PATHS = Set.of("/api/v1/transfers", "/api/v1/deposits");
     private static final int MAX_LENGTH = 64;
+    private static final TransactionDefinition REQUEST_TRANSACTION = requestTransaction();
 
     private final IdempotencyService idempotencyService;
     private final ProblemResponseWriter problemWriter;
+    private final PlatformTransactionManager transactionManager;
 
-    public IdempotencyFilter(IdempotencyService idempotencyService, ProblemResponseWriter problemWriter) {
+    public IdempotencyFilter(IdempotencyService idempotencyService, ProblemResponseWriter problemWriter,
+            PlatformTransactionManager transactionManager) {
         this.idempotencyService = idempotencyService;
         this.problemWriter = problemWriter;
+        this.transactionManager = transactionManager;
     }
 
     @Override
@@ -81,22 +93,52 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private void execute(CachedBodyRequest request, HttpServletResponse response, FilterChain chain,
             String owner, String key) throws ServletException, IOException {
         ContentCachingResponseWrapper recorder = new ContentCachingResponseWrapper(response);
+        TransactionStatus transaction = null;
         try {
+            transaction = transactionManager.getTransaction(REQUEST_TRANSACTION);
             chain.doFilter(request, recorder);
+            if (recorder.getStatus() >= 500) {
+                transactionManager.rollback(transaction);
+                idempotencyService.release(owner, key);
+            } else if (recorder.getStatus() >= 400) {
+                // A rejected request changed nothing, so its answer is stored on its own.
+                transactionManager.rollback(transaction);
+                idempotencyService.complete(owner, key, stored(recorder));
+            } else {
+                idempotencyService.complete(owner, key, stored(recorder));
+                transactionManager.commit(transaction);
+            }
         } catch (ServletException | IOException | RuntimeException e) {
-            idempotencyService.release(owner, key);
+            abandon(transaction, owner, key, e);
             throw e;
         }
-
-        if (recorder.getStatus() >= 500) {
-            idempotencyService.release(owner, key);
-        } else {
-            idempotencyService.complete(owner, key, new StoredResponse(
-                    recorder.getStatus(),
-                    recorder.getContentType(),
-                    new String(recorder.getContentAsByteArray(), StandardCharsets.UTF_8)));
-        }
         recorder.copyBodyToResponse();
+    }
+
+    private void abandon(TransactionStatus transaction, String owner, String key, Exception failure) {
+        try {
+            if (transaction != null && !transaction.isCompleted()) {
+                transactionManager.rollback(transaction);
+            }
+            idempotencyService.release(owner, key);
+        } catch (RuntimeException cleanupFailure) {
+            failure.addSuppressed(cleanupFailure);
+        }
+    }
+
+    private static StoredResponse stored(ContentCachingResponseWrapper recorder) {
+        return new StoredResponse(
+                recorder.getStatus(),
+                recorder.getContentType(),
+                new String(recorder.getContentAsByteArray(), StandardCharsets.UTF_8));
+    }
+
+    /** Times out well before an unfinished key counts as abandoned, so a takeover doesn't overlap a live request. */
+    private static TransactionDefinition requestTransaction() {
+        DefaultTransactionDefinition definition = new DefaultTransactionDefinition();
+        definition.setName("idempotent request");
+        definition.setTimeout((int) IdempotencyService.ABANDONED_AFTER.dividedBy(2).toSeconds());
+        return definition;
     }
 
     private static void replay(HttpServletResponse response, StoredResponse stored) throws IOException {
