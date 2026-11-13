@@ -285,6 +285,42 @@ Every error is an [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) Problem Det
 | `/problems/idempotency-key-reused` | 422 | The key was used for a different request |
 | `/problems/internal` | 500 | Unexpected failure; no internal details are exposed |
 
+### Where errors are caught
+
+A request passes through servlet filters before it reaches Spring MVC, and `@RestControllerAdvice` only sees exceptions thrown inside Spring MVC. So errors are caught in three places, and all three take their type, title and status from one enum, `ProblemType`:
+
+```mermaid
+flowchart TB
+  C["Client request"] --> SEC
+  subgraph FILTERS["Servlet filter chain, outside Spring MVC"]
+    SEC["Spring Security filters<br/>JWT check and role rules"]
+    IDEM["IdempotencyFilter<br/>POST transfers and deposits"]
+  end
+  subgraph MVC["DispatcherServlet, Spring MVC"]
+    CTRL["Controller<br/>@Valid request body"]
+    SVC["Service and domain model<br/>@Transactional"]
+  end
+  SEC --> IDEM --> CTRL --> SVC
+  SEC -- "401 and 403" --> PSH["ProblemSecurityHandler"]
+  PSH --> PRW
+  IDEM -- "400, 409, 422" --> PRW["ProblemResponseWriter"]
+  CTRL -- "validation, bad JSON" --> GEH["GlobalExceptionHandler<br/>@RestControllerAdvice"]
+  SVC -- "domain exceptions and anything unexpected" --> GEH
+  PRW --> OUT["application/problem+json"]
+  GEH --> OUT
+  CAT[("ProblemType enum")] -.-> PRW
+  CAT -.-> GEH
+```
+
+| Where | Class | Handles |
+| --- | --- | --- |
+| Spring Security filters | `ProblemSecurityHandler` | A missing or invalid token (401) and the wrong role (403). It keeps the standard `WWW-Authenticate` header and adds the Problem Details body. It is registered both on the resource server (a token that is present but invalid) and in the general exception handling (no token at all) |
+| `IdempotencyFilter` | `ProblemResponseWriter` | A missing key (400), a key still in use (409), and a key reused for a different request (422). Filters run before Spring MVC, so this writes the body directly to the response |
+| Spring MVC | `GlobalExceptionHandler` | Domain exceptions, Bean Validation errors (every bad field listed under `errors`), Spring's own 400 errors such as malformed JSON, and a catch-all that logs the full exception but returns a generic 500 |
+
+Business exceptions are unchecked, so the `@Transactional` service rolls back before the handler builds the response. The idempotency filter then stores 2xx and 4xx responses for replay, and releases the key after a 5xx so a retry can run again.
+
+
 ## API docs and demo
 
 - Swagger UI: http://localhost:8080/swagger-ui.html (OpenAPI JSON at `/v3/api-docs`)
