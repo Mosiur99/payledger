@@ -317,6 +317,7 @@ flowchart TB
 | Spring Security filters | `ProblemSecurityHandler` | A missing or invalid token (401) and the wrong role (403). It keeps the standard `WWW-Authenticate` header and adds the Problem Details body. It is registered both on the resource server (a token that is present but invalid) and in the general exception handling (no token at all) |
 | `IdempotencyFilter` | `ProblemResponseWriter` | A missing key (400), a key still in use (409), and a key reused for a different request (422). Filters run before Spring MVC, so this writes the body directly to the response |
 | Spring MVC | `GlobalExceptionHandler` | Domain exceptions, Bean Validation errors (every bad field listed under `errors`), Spring's own 400 errors such as malformed JSON, and a catch-all that logs the full exception but returns a generic 500 |
+| The container's `/error` page | `ProblemErrorController` | Anything that escapes the filter chain itself, such as a filter losing its database connection. It replaces Spring Boot's default error JSON with a Problem Details body for the original path |
 
 Business exceptions are unchecked, so the `@Transactional` service rolls back before the handler builds the response. The idempotency filter then stores 2xx and 4xx responses for replay, and releases the key after a 5xx so a retry can run again.
 

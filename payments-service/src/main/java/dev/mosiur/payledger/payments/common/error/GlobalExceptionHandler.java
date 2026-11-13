@@ -64,7 +64,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(Exception.class)
     ProblemDetail unexpected(Exception e) {
         log.error("Unhandled error", e);
-        return problem(ProblemType.INTERNAL, "Something went wrong on our side. Please try again later.");
+        return problem(ProblemType.INTERNAL, ProblemErrorController.INTERNAL_DETAIL);
     }
 
     @Override
@@ -101,10 +101,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     private static ProblemDetail problem(ProblemType type, String detail) {
-        ProblemDetail problem = ProblemDetail.forStatusAndDetail(type.status(), detail);
-        problem.setType(type.type());
-        problem.setTitle(type.title());
-        return problem;
+        return type.problem(detail);
     }
 
     /** A request body reports its own fields; a header or query parameter reports the parameter name. */

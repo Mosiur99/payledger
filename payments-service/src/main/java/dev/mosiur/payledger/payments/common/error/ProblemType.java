@@ -2,6 +2,7 @@ package dev.mosiur.payledger.payments.common.error;
 
 import java.net.URI;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ProblemDetail;
 
 /** Every error the API can return. The type URI is stable, so clients can switch on it. */
 public enum ProblemType {
@@ -39,5 +40,12 @@ public enum ProblemType {
 
     public HttpStatus status() {
         return status;
+    }
+
+    public ProblemDetail problem(String detail) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(status, detail);
+        problem.setType(type);
+        problem.setTitle(title);
+        return problem;
     }
 }
