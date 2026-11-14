@@ -192,6 +192,69 @@ Every movement is a transaction with exactly two ledger entries: a debit on one 
 
 A successful request runs in one database transaction with its stored response: the services join a transaction that the filter opens, and the response is saved just before it commits. So money moves if and only if its response is stored, and a crash can never leave a finished payment behind an unfinished key. A rejected (`4xx`) request is rolled back and its answer stored on its own. If a key stays unfinished for over a minute, its request died without moving money (the request's transaction times out after 30 seconds), so the next retry takes the key over and runs.
 
+```sh
+KEY=$(uuidgen)
+curl -i -X POST localhost:8080/api/v1/transfers \
+  -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"fromAccountId":"…","toAccountId":"…","amountMinor":5000}'
+# Send it again with the same KEY: the same 201 body comes back with Idempotent-Replayed: true, and no second transfer happens.
+```
+
+### How a keyed request is handled
+
+`IdempotencyFilter` runs after Spring Security, so the caller is already known, and before Spring MVC. Only `POST /api/v1/transfers` and `POST /api/v1/deposits` go through it.
+
+```mermaid
+flowchart TB
+  R["POST with Idempotency-Key"] --> V{"Key present,<br/>1 to 64 chars?"}
+  V -- no --> E400["400 idempotency-key-required"]
+  V -- yes --> H["Fingerprint = SHA-256 of<br/>method, path and body"]
+  H --> I["INSERT key ... ON CONFLICT DO NOTHING"]
+  I -- "row inserted" --> RUN
+  I -- "key exists" --> F{"Same fingerprint?"}
+  F -- no --> E422["422 idempotency-key-reused"]
+  F -- yes --> D{"Response stored?"}
+  D -- yes --> REPLAY["Replay stored status and body<br/>Idempotent-Replayed: true"]
+  D -- no --> A{"Unfinished for<br/>over a minute?"}
+  A -- no --> E409["409 idempotency-in-progress"]
+  A -- "yes, take it over" --> RUN
+  RUN["Open the request transaction<br/>(30 s timeout), run the controller"] --> S{"Status"}
+  S -- "2xx" --> OK["Store response, then COMMIT<br/>money and response together"]
+  S -- "4xx" --> REJ["ROLLBACK, then store the<br/>rejection for replay"]
+  S -- "5xx or exception" --> REL["ROLLBACK and delete the key<br/>so a retry can run"]
+```
+
+### Storage
+
+```sql
+CREATE TABLE idempotency_keys (
+    owner_id              varchar(64)  NOT NULL,  -- the token's sub claim
+    idempotency_key       varchar(64)  NOT NULL,
+    request_hash          char(64)     NOT NULL,  -- SHA-256 fingerprint of the request
+    response_status       int,                    -- NULL while the first request is running
+    response_content_type varchar(100),
+    response_body         text,
+    created_at            timestamptz  NOT NULL,
+    completed_at          timestamptz,
+    PRIMARY KEY (owner_id, idempotency_key)
+);
+```
+
+The primary key on `(owner_id, idempotency_key)` scopes each key to its caller. Two users can't collide on a key, and neither can read the other's stored responses.
+
+### Why it holds up under concurrency and crashes
+
+| Risk | What prevents it |
+| --- | --- |
+| Two identical requests arrive at the same moment | `INSERT ... ON CONFLICT DO NOTHING` on the primary key. PostgreSQL makes the second insert wait for the first. Exactly one request gets the row and runs. The other gets `409`, and a later retry receives the replay |
+| Money moves but the response is lost (a crash before it is saved) | The response is saved in the same transaction as the ledger entries and the outbox event, so all three commit or none do |
+| A key stays stuck after the process dies | An unfinished key older than one minute is reclaimed with a conditional `UPDATE ... WHERE created_at < now - 1 min`. When several retries race, only one wins. The request transaction times out at 30 seconds, so a request that is still running is never taken over |
+| A key is reused for a different payment | The fingerprints differ, so the request gets `422` instead of the replay of another payment |
+| A business rejection (for example, insufficient funds) is retried | The `4xx` is stored and replayed, so the client always gets the same answer for that key |
+| A transient server error | The key is deleted after a `5xx`, so a retry with the same key runs again |
+
+`IdempotencyServiceImpl` holds the decision logic. It returns a sealed `IdempotencyDecision` (`Proceed`, `Replay`, `InProgress` or `KeyReused`), and the filter handles every case with an exhaustive `switch`.
+
 ## Events: transactional outbox
 
 Every committed ledger transaction (deposit or transfer) is published to the Kafka topic `payledger.transactions` as a `TransactionPosted` event, keyed by transaction id.
@@ -233,6 +296,45 @@ docker compose -f deploy/compose/docker-compose.yml --profile observability up -
 | Grafana | http://localhost:3000 | The **PayLedger Overview** dashboard opens as the home page (anonymous view; `admin` / `admin` to edit) |
 | Prometheus | http://localhost:9090 | Raw metrics and queries |
 | Jaeger | http://localhost:16686 | Traces across both services |
+
+### Grafana dashboard
+
+Grafana is configured entirely from files, so `docker compose up` produces the same dashboard every time without any manual setup:
+
+| File | Purpose |
+| --- | --- |
+| `deploy/observability/prometheus.yml` | Scrapes `/actuator/prometheus` on both services every 5 seconds |
+| `deploy/observability/grafana/provisioning/datasources/datasources.yml` | Adds Prometheus (the default) and Jaeger as data sources, with fixed uids |
+| `deploy/observability/grafana/provisioning/dashboards/dashboards.yml` | Loads every dashboard JSON in the mounted folder into a **PayLedger** folder |
+| `deploy/observability/grafana/dashboards/payledger-overview.json` | The **PayLedger Overview** dashboard, which is also Grafana's home page |
+
+The dashboard covers the last 30 minutes and refreshes every 5 seconds. Its panels are grouped into three rows:
+
+| Row | Panel | Query (PromQL) | What to look for |
+| --- | --- | --- | --- |
+| Business | Transfers, Deposits (last 15 min) | `sum(increase(payledger_ledger_transactions_total{type="TRANSFER"}[15m]))` | Normal traffic. A sudden drop to zero means payments stopped |
+| Business | BDT moved (last 1 h) | `sum(increase(payledger_ledger_volume_minor_total{currency="BDT",type="TRANSFER"}[1h])) / 100` | Volume in taka, converted from paisa |
+| Business | Outbox pending | `max(payledger_outbox_pending)` | Should stay near 0 |
+| Business | Oldest pending event | `max(payledger_outbox_oldest_pending_age_seconds)` | Turns red when events are not reaching Kafka |
+| Business | Dead letters (last 1 h) | `sum(increase(payledger_events_dead_lettered_total[1h]))` | Anything above 0 is worth a look in the dead letter topic |
+| Business | Ledger transactions and money moved per minute | `sum by (type) (rate(payledger_ledger_transactions_total[1m])) * 60` | The trend by type and by currency |
+| API | p95 latency by endpoint | `histogram_quantile(0.95, sum by (le, method, uri) (rate(http_server_requests_seconds_bucket{uri=~"/api/.*"}[1m])))` | Slow endpoints. Lock contention shows up here first |
+| API | Requests per second by status | `sum by (status) (rate(http_server_requests_seconds_count{uri=~"/api/.*"}[1m]))` | A rise in `5xx`, or in `409` from idempotency retries |
+| Events pipeline | Outbox relay | `rate(payledger_outbox_published_total[1m])` vs `rate(payledger_outbox_publish_failures_total[1m])` | Failures mean Kafka is unreachable |
+| Events pipeline | Outbox backlog | The pending count and the oldest age on one chart | If both grow, the relay is stuck |
+| Events pipeline | Notification consumer lag | `max(kafka_consumer_fetch_manager_records_lag_max)` | Whether the consumer is falling behind |
+| Events pipeline | Notifications created per minute | `sum by (kind) (rate(payledger_notifications_stored_total[1m])) * 60` | Should follow the ledger transaction rate |
+| Events pipeline | Duplicates and dead letters | `increase(payledger_events_duplicates_total[5m])`, `increase(payledger_events_dead_lettered_total[5m])` | Duplicates are expected and harmless. Dead letters are not |
+
+Read top to bottom, the dashboard follows one payment: the request (API row), the money (Business row), and the event on its way to a notification (Events pipeline row). When something breaks, the first panel to change usually points at the cause:
+
+- Rising latency points at the database.
+- A growing outbox age points at Kafka or the relay.
+- Consumer lag or dead letters point at notification-service.
+
+To change the dashboard, edit it in Grafana as `admin`, export it as JSON and replace `payledger-overview.json`. The file is the source of truth.
+
+Not included yet: alert rules and Alertmanager, persistent Prometheus storage, and a protected metrics endpoint.
 
 ### Metrics
 
